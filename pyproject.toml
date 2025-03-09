@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my_project"
+version = "0.1.0"
+description = "realistic stellar photometry and spectroscopy"
+authors = [{ name = "Ilay Kamai", email = "ilay.kamai@campus.technion.ac.il" }]
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "pandas"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/my_project"
