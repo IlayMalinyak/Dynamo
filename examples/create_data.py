@@ -25,7 +25,7 @@ G = 6.67 * 1e-8
 M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
-DATASET_DIR = 'dataset'
+DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset'
 MODELS_ROOT = r'C:\Users\Ilay\projects\simulations\starsim\starsim'
 
 os.makedirs(DATASET_DIR, exist_ok=True)
@@ -186,6 +186,9 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
     t_sampling : numpy.ndarray
         Time array for the light curve
     """
+    if f"{idx}.pqt" in os.listdir(f"{sim_dir}/lc"):
+        print(f"{idx}.pqt already exists in {sim_dir}/lc")
+        return None, None
     try:
         # Create StarSim object and set parameters
         sm = Star(conf_file_path='starsim.conf')
@@ -218,16 +221,16 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                     'logg': float(sim_row['logg']),
                     'luminosity': float(sim_row['L']),
                     'radius': float(sim_row['R']),
+                    'inclination': float(sim_row['Inclination']),
+                    'rotation_period': float(sim_row['Period']),
+                    'differential_rotation': float(sim_row['Shear']),
                 },
                 'activity_params': {
                     'activity_rate': float(sim_row['Activity Rate']),
                     'cycle_length': float(sim_row['Cycle Length']),
                     'cycle_overlap': float(sim_row['Cycle Overlap']),
-                    'inclination': float(sim_row['Inclination']),
                     'spot_min_latitude': float(sim_row['Spot Min']),
                     'spot_max_latitude': float(sim_row['Spot Max']),
-                    'rotation_period': float(sim_row['Period']),
-                    'differential_rotation': float(sim_row['Shear']),
                     'spot_decay_time': float(sim_row['Decay Time']),
                     'butterfly_pattern': bool(sim_row['Butterfly']),
                 },
@@ -262,7 +265,6 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                          f' inclination - {np.rad2deg(np.pi/2 - sm.inclination):.2f} deg')
 
             plt.tight_layout()
-            os.makedirs('../tests/images', exist_ok=True)
             plt.savefig(f'images/{idx}.png')
             plt.close()
 
@@ -307,7 +309,7 @@ def main():
     os.makedirs(f"{DATASET_DIR}/spots", exist_ok=True)
     os.makedirs(f"{DATASET_DIR}/lamost", exist_ok=True)
     os.makedirs(f"{DATASET_DIR}/configs", exist_ok=True)
-    os.makedirs("../../simulations/images", exist_ok=True)
+    os.makedirs('images', exist_ok=True)
 
     # Check if simulation properties exist
     if os.path.exists(f"{DATASET_DIR}/simulation_properties.csv"):
@@ -315,20 +317,20 @@ def main():
         sims = pd.read_csv(f"{DATASET_DIR}/simulation_properties.csv")
     else:
         # Generate 5000 simulations
-        sims = generate_simdata(DATASET_DIR, 100)
+        sims = generate_simdata(DATASET_DIR, 5000)
 
     # Load wavelength array for LAMOST spectra
     wv_array = np.load('lamost_wv.npy')
 
     # Set the number of days to simulate
-    ndays = 180
+    ndays = 270
 
     # Start timing
     start_time = time.time()
 
     # Determine number of processes (use 75% of available cores)
-    # num_cpus = max(1, int(mp.cpu_count() * 0.2))
-    num_cpus = 1
+    num_cpus = max(1, int(mp.cpu_count() * 0.4))
+    # num_cpus = 1
     logger.info(f"Using {num_cpus} CPU cores for parallel processing")
 
     # Prepare arguments for multiprocessing
