@@ -25,7 +25,7 @@ G = 6.67 * 1e-8
 M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
-DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset'
+DATASET_DIR = r'C:\Users\Ilay\projects\simulations\test_samples'
 MODELS_ROOT = r'C:\Users\Ilay\projects\simulations\starsim\starsim'
 
 os.makedirs(DATASET_DIR, exist_ok=True)
@@ -50,31 +50,38 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     clen = np.random.normal(loc=10, scale=2.8,
                             size=Nlc)  # gives roughly the fraction with cycle < 4 years to be the same as detected by Reinhold
     cover = 10 ** np.random.uniform(low=-1, high=np.log10(3), size=Nlc)
-    period1 = 10 ** np.random.uniform(low=1, high=np.log10(50), size=int(0.8 * Nlc))
-    period2 = 10 ** np.random.uniform(low=0, high=np.log10(20), size=Nlc - int(0.8 * Nlc))
-    period = np.concatenate((period1, period2))
-    np.random.shuffle(period)
-    theta_low = np.random.uniform(low=0, high=40, size=Nlc)
-    theta_high = np.random.uniform(low=theta_low, high=80, size=Nlc)
     tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
     diffrot_shear = np.random.uniform(0, 1, size=Nlc)
     mass = sample_kroupa_imf(Nlc, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=Nlc)
-    ages = np.clip(np.random.normal(3, 1, size=Nlc), a_min=0.1, a_max=10)
+    ages = np.clip(np.random.normal(4.5, 2, size=Nlc), a_min=0.1, a_max=10)
     ar = (ages / AGE_SUN) ** (-0.5) / 2
-    interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='mist')
+    theta_low = np.random.uniform(low=0, high=20, size=Nlc)
+    theta_high = np.random.uniform(low=theta_low, high=90 * ar, size=Nlc)
+    mask = theta_high > 90
+    theta_high[mask] = np.random.uniform(60, 90, size=np.count_nonzero(mask))
+    interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='fastlaunch')
     convective_shift = np.random.normal(loc=1, scale=1, size=Nlc)
     teff = interp['Teff']
     logg = interp['logg']
     L = np.clip(interp['L'], a_min=None, a_max=100)
     R = interp['R']
+    if 'Prot' in interp.keys() and interp['Prot'] is not None:
+        prot = interp['Prot']
+        mask = prot > 100
+        prot[mask] = np.random.uniform(35, 50, size=np.count_nonzero(mask))
+    else:
+        prot1 = 10 ** np.random.uniform(low=1, high=np.log10(50), size=int(0.8 * Nlc))
+        prot2 = 10 ** np.random.uniform(low=0, high=np.log10(20), size=Nlc - int(0.8 * Nlc))
+        prot = np.concatenate((prot1, prot2))
+        np.random.shuffle(prot)
     cdpp = 200 * L
     outlier_rate = np.random.uniform(0, 0.003, size=Nlc)
     flicker = np.random.uniform(0, 0.3, size=Nlc)
     np.random.shuffle(diffrot_shear)
-    omega = 2 * np.pi / period  # rad / day
+    omega = 2 * np.pi / prot  # rad / day
 
     # Stitch this all together and write the simulation properties to file
     sims = {}
@@ -86,13 +93,13 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     sims['logg'] = logg
     sims['L'] = L
     sims['R'] = R
+    sims["Prot"] = prot
     sims["Activity Rate"] = ar
     sims["Cycle Length"] = clen
     sims["Cycle Overlap"] = cover
     sims["Inclination"] = incl
     sims["Spot Min"] = theta_low
     sims["Spot Max"] = theta_high
-    sims["Period"] = period
     sims["Omega"] = omega
     sims["Shear"] = diffrot_shear
     sims["Decay Time"] = tau_evol
@@ -142,7 +149,8 @@ def plot_distributions(sims, root, sim_name):
 
 def plot_pairplot(sims, Nlc, root, sim_name):
     """Create and save pairplot of key parameters."""
-    sims_reduce = sims[['mass', 'age', 'FeH', 'Teff', 'logg', 'L', 'R', 'alpha/H', 'Activity Rate']]
+    cols = ['mass', 'age', 'FeH', 'Teff', 'logg', 'L', 'R', 'Prot', 'Spot Min', 'Spot Max', 'Activity Rate']
+    sims_reduce = sims[cols]
     sns.set(style="ticks", font_scale=3)
     pairplot = sns.pairplot(
         sims_reduce.sample(min(Nlc, 1000)),  # Limit sample size for faster plotting
@@ -222,7 +230,7 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                     'luminosity': float(sim_row['L']),
                     'radius': float(sim_row['R']),
                     'inclination': float(sim_row['Inclination']),
-                    'rotation_period': float(sim_row['Period']),
+                    'rotation_period': float(sim_row['Prot']),
                     'differential_rotation': float(sim_row['Shear']),
                 },
                 'activity_params': {
@@ -329,8 +337,8 @@ def main():
     start_time = time.time()
 
     # Determine number of processes (use 75% of available cores)
-    num_cpus = max(1, int(mp.cpu_count() * 0.4))
-    # num_cpus = 1
+    # num_cpus = max(1, int(mp.cpu_count() * 0.4))
+    num_cpus = 1
     logger.info(f"Using {num_cpus} CPU cores for parallel processing")
 
     # Prepare arguments for multiprocessing

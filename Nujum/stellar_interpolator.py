@@ -9,7 +9,7 @@ import time
 def get_yrec_params(grid_name, mass, feh, alpha, age):
     df = kh.load_full_grid(grid_name)
     # Parameters to interpolate
-    params_to_interpolate = ['Log Teff(K)', 'logg', 'L/Lsun', 'R/Rsun']
+    params_to_interpolate = ['Log Teff(K)', 'logg', 'L/Lsun', 'R/Rsun', 'Prot(days)']
 
     # Convert inputs to arrays if they're not already
     mass_arr = np.atleast_1d(mass)
@@ -121,12 +121,14 @@ def interpolate_stellar_parameters(mass, feh, alpha, age, grid_name='fastlaunch'
         logg = results['logg']
         L = results['L/Lsun']
         R = results['R/Rsun']
+        Prot = results['Prot(days)']
     else:
         teff = 10 ** results['log_Teff']
         logg = results['log_g']
         L = 10 ** results['log_L']
         R = 10 ** results['log_R']
-    return {'Teff': teff, 'logg': logg, 'L': L, 'R': R}
+        Prot = None
+    return {'Teff': teff, 'logg': logg, 'L': L, 'R': R, 'Prot': Prot}
 
 
 def get_interpolator(method):

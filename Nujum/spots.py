@@ -318,9 +318,9 @@ class SpotsGenerator(object):
             tau += 1
             index = (self.tau1 <= tau) & (tau < self.tau2)
             rc0 = np.where(index, prob_corr / (self.tau2 - self.tau1), 0)
-            # create correlation with opposite longitude (they get half of the original probability)
-            oposite_lon = np.linspace(self.nlon // 2, self.nlon + self.nlon // 2, self.nlon) % self.nlon
-            rc0[oposite_lon.astype(np.int64), :, :] = rc0[:, :, :] / 2
+            # create correlation with opposite longitude (arbitrarily, they get half of the original probability)
+            opposite_lon = np.linspace(self.nlon // 2, self.nlon + self.nlon // 2, self.nlon) % self.nlon
+            rc0[opposite_lon.astype(np.int64), :, :] = rc0[:, :, :] / 2
 
             if len(self.regions) >= self.max_nspots:
                 break

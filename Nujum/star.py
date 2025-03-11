@@ -181,7 +181,7 @@ class Star:
         self.spot_T_contrast_min = min(params_dict['Activity Rate'] * 10, 500)
         self.spot_T_contrast_max = self.spot_T_contrast_min + 50
         self.differential_rotation = params_dict['Shear']
-        self.rotation_period = params_dict['Period']
+        self.rotation_period = params_dict['Prot']
         self.convective_shift = params_dict['convective_shift']
         self.radius = params_dict['R']
         self.mass = params_dict['mass']
