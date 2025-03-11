@@ -50,7 +50,10 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     clen = np.random.normal(loc=10, scale=2.8,
                             size=Nlc)  # gives roughly the fraction with cycle < 4 years to be the same as detected by Reinhold
     cover = 10 ** np.random.uniform(low=-1, high=np.log10(3), size=Nlc)
-    tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
+    # tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
+    tau_evol = np.random.normal(loc=6, scale=2, size=Nlc) # spots lifetime in units of period. The choise of this distribution is arbitrary
+    mask = tau_evol < 2
+    tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
     diffrot_shear = np.random.uniform(0, 1, size=Nlc)
     mass = sample_kroupa_imf(Nlc, m_min=0.3, m_max=2.0)
