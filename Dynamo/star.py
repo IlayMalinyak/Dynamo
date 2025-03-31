@@ -181,7 +181,7 @@ class Star:
         self.spot_T_contrast_min = min(params_dict['Activity Rate'] * 10, 500)
         self.spot_T_contrast_max = self.spot_T_contrast_min + 50
         self.differential_rotation = params_dict['Shear']
-        self.rotation_period = params_dict['Prot']
+        self.rotation_period = params_dict['Period']
         self.convective_shift = params_dict['convective_shift']
         self.radius = params_dict['R']
         self.mass = params_dict['mass']
@@ -212,6 +212,7 @@ class Star:
             max_lat=self.spot_max_lat,
             min_lat=self.spot_min_lat,
             butterfly=self.butterfly,
+            max_nspots=200,
             seed=1234
         )
         ref_time = regions[0]['nday']
@@ -219,34 +220,34 @@ class Star:
         self.reference_time = 0
         spots_config = np.zeros((len(regions), 14))
         spots_config[:, 0] = regions['nday']
-        spots_config[:, 1] = self.spots_decay_time * self.rotation_period * np.ones(len(spots_config))
+        spots_duration = max(self.spots_decay_time * self.rotation_period, 50)
+        spots_config[:, 1] = spots_duration * np.ones(len(spots_config))
         spots_config[:, 2] = np.rad2deg((regions['thpos'] + regions['thneg']) / 2)
         spots_config[:, 3] = np.rad2deg((regions['phpos'] + regions['phneg']) / 2)
-        spots_config[:, 4] = np.sqrt(regions['bmax'] / 4)
+        spots_config[:, 4] = np.sqrt(regions['bmax']) # bmax is proportional to area (radius ** 2)
         self.spot_map = spots_config
+        self.n_grid_rings = int(max(10, 120/(spots_config[:, 4].min())))
+        print("number of spots: ", len(regions), 'bmax: ', regions['bmax'].mean(),
+              regions['bmax'].max(), regions['bmax'].min(), 'spots_duration: ', spots_duration)
+        print("number of grid rings: ", self.n_grid_rings)
 
     def create_lamost_spectra(self, wv_array, ff_sp):
-        sini, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
+        mu, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
                                                                      self.temperature_photosphere,
                                                                      self.logg,
                                                                      wv_array=wv_array)  # sini is the angles at which the model is computed.
-        sini, wvp_lc, spot_flux = spectra.interpolate_Phoenix_mu_lc(self,
+        mu, wvp_lc, spot_flux = spectra.interpolate_Phoenix_mu_lc(self,
                                                                     self.temperature_spot,
                                                                     self.logg,
                                                                     wv_array=wv_array)
         disk_integrated_photo = np.zeros(len(wv_array))
         disk_integrated_spot = np.zeros(len(wv_array))
 
-        # Assuming sini contains the μ values (cos(θ))
-        for i in range(len(sini)):
-            # Weight by μ and the differential area element
-            weight = sini[i] * 2 * np.pi * (1 - sini[i] ** 2) ** 0.5
+        # Assuming mu contains the μ values (cos(θ))
+        for i in range(len(mu) - 1):
+            weight = mu[i] * (mu[i + 1] ** 2 - mu[i] ** 2)
             disk_integrated_photo += photo_flux[i] * weight
             disk_integrated_spot += spot_flux[i] * weight
-
-        # Normalize
-        disk_integrated_photo /= np.sum([sini[i] * 2 * np.pi * (1 - sini[i] ** 2) ** 0.5 for i in range(len(sini))])
-        disk_integrated_spot /= np.sum([sini[i] * 2 * np.pi * (1 - sini[i] ** 2) ** 0.5 for i in range(len(sini))])
 
         wavelength_step = wv_array[1] - wv_array[0]  # assuming uniform sampling
         central_wavelength = np.median(wv_array)
@@ -264,6 +265,9 @@ class Star:
             lamost_sensitivity = self.create_synthetic_lamost_sensitivity(wv_array)
 
         combined_spectrum = combined_spectrum * lamost_sensitivity
+
+        # Apply rotational broadening
+        combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, self.vsini)
 
         base_snr = self.cdpp * 2  # low resolution spectra is more noisy
         wavelength_dependent_snr = base_snr * np.sqrt(lamost_sensitivity / np.max(lamost_sensitivity))
@@ -334,9 +338,10 @@ class Star:
 
     def compute_forward(self, t=None, wv_array=None):
         self.inclination = np.deg2rad(self.inclination)
-        self.spot_T_contrast = np.random.randint(low=self.spot_T_contrast_min, high=self.spot_T_contrast_max)
+        # self.spot_T_contrast = np.random.randint(low=self.spot_T_contrast_min, high=self.spot_T_contrast_max)
+        self.spot_T_contrast = 200
         self.tau_emerge = min(2, self.rotation_period * self.spots_decay_time / 10)
-        self.tau_decay = self.rotation_period * self.spots_decay_time
+        self.tau_decay = max(self.rotation_period * self.spots_decay_time, 50)
         self.results = {}
         self.wavelength_lower_limit = float(self.conf_file.get('general',
                                                                'wavelength_lower_limit'))  # Repeat this just in case CRX has modified the values
@@ -395,21 +400,22 @@ class Star:
                                                                                        flx_ph, vec_grid,
                                                                                        plot_map=self.plot_grid_map)
         self.final_spots_positions = spots_positions
-        noisy_flux, noise_components = noise.add_kepler_noise(
-            self.obs_times, FLUX,
-            cdpp_ppm=self.cdpp,
-            flicker_timescale=self.flicker,
-            outlier_rate=self.outliers_rate,
-            quaternion_jumps=False,  # Include quaternion adjustment discontinuities
-            safe_modes=False  # Include safe mode events
-        )
 
-        noisy_flux += self.luminosity    # assuming equal distance, flux of luminos stars is higher
+        # noisy_flux, noise_components = noise.add_kepler_noise(
+        #     self.obs_times, FLUX,
+        #     cdpp_ppm=self.cdpp,
+        #     flicker_timescale=self.flicker,
+        #     outlier_rate=self.outliers_rate,
+        #     quaternion_jumps=False,  # Include quaternion adjustment discontinuities
+        #     safe_modes=False  # Include safe mode events
+        # )
+
+        # noisy_flux += self.luminosity    # assuming equal distance, flux of luminos stars is higher
 
         lamost_spectra = self.create_lamost_spectra(wvp_lc, ff_sp)
 
         self.results['time'] = t
-        self.results['lc'] = noisy_flux
+        self.results['lc'] = FLUX
         self.results['spectra'] = lamost_spectra
         self.results['ff_ph'] = ff_ph
         self.results['ff_sp'] = ff_sp

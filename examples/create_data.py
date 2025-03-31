@@ -9,10 +9,10 @@ import logging
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
-from Nujum.star import Star
+from Dynamo.star import Star
 import kiauhoku as kh
-from Nujum.imf import sample_kroupa_imf
-from Nujum.stellar_interpolator import interpolate_stellar_parameters
+from Dynamo.imf import sample_kroupa_imf
+from Dynamo.stellar_interpolator import interpolate_stellar_parameters
 import scipy.stats as stats
 
 # Constants
@@ -25,7 +25,7 @@ G = 6.67 * 1e-8
 M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
-DATASET_DIR = r'C:\Users\Ilay\projects\simulations\test_samples'
+DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset_test'
 MODELS_ROOT = r'C:\Users\Ilay\projects\simulations\starsim\starsim'
 
 os.makedirs(DATASET_DIR, exist_ok=True)
@@ -69,7 +69,7 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     convective_shift = np.random.normal(loc=1, scale=1, size=Nlc)
     teff = interp['Teff']
     logg = interp['logg']
-    L = np.clip(interp['L'], a_min=None, a_max=100)
+    L = np.clip(interp['L'], a_min=None, a_max=40)
     R = interp['R']
     if 'Prot' in interp.keys() and interp['Prot'] is not None:
         prot = interp['Prot']
@@ -96,7 +96,7 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     sims['logg'] = logg
     sims['L'] = L
     sims['R'] = R
-    sims["Prot"] = prot
+    sims["Period"] = prot
     sims["Activity Rate"] = ar
     sims["Cycle Length"] = clen
     sims["Cycle Overlap"] = cover
@@ -152,7 +152,7 @@ def plot_distributions(sims, root, sim_name):
 
 def plot_pairplot(sims, Nlc, root, sim_name):
     """Create and save pairplot of key parameters."""
-    cols = ['mass', 'age', 'FeH', 'Teff', 'logg', 'L', 'R', 'Prot', 'Spot Min', 'Spot Max', 'Activity Rate']
+    cols = ['mass', 'age', 'FeH', 'Teff', 'logg', 'L', 'R', 'Period', 'Spot Min', 'Spot Max', 'Activity Rate']
     sims_reduce = sims[cols]
     sns.set(style="ticks", font_scale=3)
     pairplot = sns.pairplot(
@@ -220,6 +220,8 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
         spectra = sm.results['spectra']
         wavelength = sm.results['wvp']
 
+        print("\nrange values: ", lc.min(), lc.max(), "num spots: ", len(sm.spot_map))
+
         # Save config file with all parameters
         if save:
             config = {
@@ -233,7 +235,7 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                     'luminosity': float(sim_row['L']),
                     'radius': float(sim_row['R']),
                     'inclination': float(sim_row['Inclination']),
-                    'rotation_period': float(sim_row['Prot']),
+                    'rotation_period': float(sim_row['Period']),
                     'differential_rotation': float(sim_row['Shear']),
                 },
                 'activity_params': {
@@ -247,6 +249,7 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                 },
                 'simulation_params': {
                     'num_days': ndays,
+                    'num_spots': len(sm.spot_map),
                     'sampling_rate': freq_rate,
                     'num_points': len(t_sampling),
                     'evolution_law': 'gaussian',
@@ -258,7 +261,7 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                 json.dump(config, f, indent=4)
 
         # Plot every 100th sample
-        if idx % 10 == 0:
+        if idx % 1 == 0:
             fig, axes = plt.subplots(2, 1, figsize=(16, 9))
             axes[0].plot(t_sampling, lc)
             axes[0].set_xlabel('Time [days]')
@@ -329,12 +332,12 @@ def main():
     else:
         # Generate 5000 simulations
         sims = generate_simdata(DATASET_DIR, 5000)
-
+    sims = sims.iloc[39:]
     # Load wavelength array for LAMOST spectra
     wv_array = np.load('lamost_wv.npy')
 
     # Set the number of days to simulate
-    ndays = 270
+    ndays = 1000
 
     # Start timing
     start_time = time.time()

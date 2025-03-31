@@ -737,237 +737,339 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
     return ccf_tot,typ, Aph, Asp, Afc, Apl
 
 
+@nb.njit(cache=True, error_model='numpy')
+def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid, vec_spot,
+                                 simulate_planet, planet_pos, brigh_ph, brigh_sp, brigh_fc, flx_ph, vis):
+    """
+    Calculate the flux emitted from a rotating star with spots, faculae, and possibly planets.
 
-@nb.njit(cache=True,error_model='numpy')
-def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,bph,bsp,bfc,flxph,vis):
- 
+    Parameters:
+    -----------
+    N : int
+        Number of concentric rings in the grid
+    Ngrid_in_ring : array
+        Number of grid elements in each ring
+    proj_area : array
+        Projected area of each ring
+    cos_centers : array
+        Cosine of the angles at the centers
+    spot_pos : array
+        Positions and sizes of spots [theta, phi, radius_spot, radius_facula]
+    vec_grid : array
+        Unit vectors for each grid point
+    vec_spot : array
+        Unit vectors for each spot
+    simulate_planet : bool
+        Whether to simulate a planet
+    planet_pos : array
+        Planet position [distance, angle, radius]
+    brigh_ph : array
+        Brightness of photosphere for each ring
+    brigh_sp : array
+        Brightness of spots for each ring
+    brigh_fc : array
+        Brightness of faculae for each ring
+    flx_ph : float
+        Total flux of photosphere
+    vis : array
+        Visibility of each spot and the planet
 
-    #define things
-    width=np.pi/(2*N-1) #width of one grid element, in radiants
-    flux = flxph
+    Returns:
+    --------
+    flux : float
+        Calculated flux
+    typ : list
+        Type of grid elements (photosphere, spot, facula, planet) fractions
+    Aph, Asp, Afc, Apl : float
+        Total area fractions of photosphere, spots, faculae, and planet
+    """
+    # Define constants
+    width = np.pi / (2 * N - 1)  # Width of one grid element in radians
+    flux = np.float64(flx_ph)  # Ensure flux is float64 to prevent overflow
+
+    # Get indices of visible spots for efficient iteration
+    vis_spots_idx = [i for i in range(len(vis) - 1) if vis[i] == 1.0]
+
+    # Initialize area fractions
+    Aph = 0.0  # Total photosphere area
+    Asp = 0.0  # Total spot area
+    Afc = 0.0  # Total facula area
+    Apl = 0.0  # Total planet area
+
+    # List to store grid type information
+    typ = []
+
+    # Process each grid element
+    for iteration in range(sum(Ngrid_in_ring)):
+        # Get the ring index for the current grid element
+        ring_idx = 0
+        if iteration > 0:
+            sum_grids = 0
+            for i in range(N):
+                sum_grids += Ngrid_in_ring[i]
+                if iteration < sum_grids:
+                    ring_idx = i
+                    break
+
+        # Get the grid element characteristics based on ring location
+        if ring_idx == 0:
+            # Central grid (circle)
+            grid_info = process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
+                                             width, simulate_planet, planet_pos, vis)
+        else:
+            # Other grids (square-like)
+            grid_info = process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
+                                           width, simulate_planet, planet_pos, vis, ring_idx, cos_centers)
+
+        # Unpack grid coverage information
+        aph, asp, afc, apl = grid_info
+
+        # Add to the total flux
+        flux = flux - (1 - aph) * brigh_ph[ring_idx] + asp * brigh_sp[ring_idx] + afc * brigh_fc[ring_idx]
+
+        # Update area totals
+        Aph += aph * proj_area[ring_idx]
+        Asp += asp * proj_area[ring_idx]
+        Afc += afc * proj_area[ring_idx]
+        Apl += apl * proj_area[ring_idx]
+
+        # Store grid type information
+        typ.append([aph, asp, afc, apl])
+
+    return flux, typ, Aph, Asp, Afc, Apl
 
 
-    vis_spots_idx=[]
-    for i in range(len(vis)-1):
-        if vis[i]==1.0:
-            vis_spots_idx.append(i)
-    ###################### CENTRAL GRID ###############################
-    #Central grid is different since it is a circle. initialize values.
-    ####################################################################
-    dsp=0.0 #fraction covered by each spot
-    dfc=0.0
-    asp=0.0 #fraction covered by all spots
-    afc=0.0
-    apl=0.0
-    iteration = 0
-    
-    for l in vis_spots_idx: #for each spot
+@nb.njit(cache=True)
+def process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
+                         width, simulate_planet, planet_pos, vis):
+    """
+    Process the central grid element (circular).
 
-        if spot_pos[l][2]==0.0:
+    Returns:
+    --------
+    aph, asp, afc, apl : float
+        Area fractions of photosphere, spots, faculae, and planet
+    """
+    # Initialize area fractions for this grid
+    asp = 0.0  # Fraction covered by spots
+    afc = 0.0  # Fraction covered by faculae
+    apl = 0.0  # Fraction covered by planet
+
+    # Process spots and faculae
+    for spot_idx in vis_spots_idx:
+        # Skip if spot has zero radius
+        if spot_pos[spot_idx][2] == 0.0:
             continue
 
-        dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #compute the distance to the grid
+        # Calculate angular distance between grid and spot
+        dist = m.acos(np.dot(vec_grid[iteration], vec_spot[spot_idx]))
 
-        if dist>(width/2+spot_pos[l][2]):
-            dsp=0.0
+        # Calculate spot coverage
+        spot_radius = spot_pos[spot_idx][2]
+        asp += calculate_circular_coverage(dist, width, spot_radius)
+
+        # Calculate facula coverage (if present)
+        facula_radius = spot_pos[spot_idx][3]
+        if facula_radius > 0.0:
+            facula_coverage = calculate_circular_coverage(dist, width, facula_radius)
+            # Facula area excludes the spot area
+            afc += max(0.0, facula_coverage - asp)
+
+    # Process planet (if visible)
+    if simulate_planet and vis[-1] == 1.0:
+        # Calculate grid-planet distance
+        dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
+                      (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
+
+        width2 = 2 * m.sin(width / 2)
+        if dist > width2 / 2 + planet_pos[2]:
+            apl = 0.0
+        elif dist < planet_pos[2] - width2 / 2:
+            apl = 1.0
         else:
-            if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
-                    dsp=1.0
-                else:  #grid partially covered
-                    dsp=-(dist-spot_pos[l][2]-width/2)/width
+            apl = -(dist - planet_pos[2] - width2 / 2) / width2
 
-            else: #the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                    dsp=(2*spot_pos[l][2]/width)**2                 
-                else: #grid partially covered
-                    dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
+    # Apply constraints and adjust area fractions
+    asp, afc, apl = adjust_area_fractions(asp, afc, apl)
+
+    # Calculate photosphere fraction
+    aph = 1 - asp - afc - apl
+
+    return aph, asp, afc, apl
 
 
-        asp+=dsp
-        #FACULA
-        if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-            continue 
+@nb.njit(cache=True)
+def process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
+                       width, simulate_planet, planet_pos, vis, ring_idx, cos_centers):
+    """
+    Process grid elements in outer rings (square-like).
 
-        if dist>(width/2+spot_pos[l][3]):
-            dfc=0.0
+    Returns:
+    --------
+    aph, asp, afc, apl : float
+        Area fractions of photosphere, spots, faculae, and planet
+    """
+    # Initialize area fractions for this grid
+    asp = 0.0  # Fraction covered by spots
+    afc = 0.0  # Fraction covered by faculae
+    apl = 0.0  # Fraction covered by planet
+
+    # Process spots and faculae
+    for spot_idx in vis_spots_idx:
+        # Skip if spot has zero radius
+        if spot_pos[spot_idx][2] == 0.0:
+            continue
+
+        # Calculate angular distance between grid and spot
+        dist = m.acos(np.dot(vec_grid[iteration], vec_spot[spot_idx]))
+
+        # Calculate spot coverage for outer grid (square-like)
+        spot_radius = spot_pos[spot_idx][2]
+        asp += calculate_square_coverage(dist, width, spot_radius)
+
+        # Calculate facula coverage (if present)
+        facula_radius = spot_pos[spot_idx][3]
+        if facula_radius > 0.0:
+            facula_coverage = calculate_square_coverage(dist, width, facula_radius)
+            # Facula area excludes the spot area
+            afc += max(0.0, facula_coverage - asp)
+
+    # Process planet (if visible)
+    if simulate_planet and vis[-1] == 1.0:
+        # Calculate grid-planet distance
+        dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
+                      (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
+
+        width2 = cos_centers[ring_idx] * width
+        if dist > width2 / 2 + planet_pos[2]:
+            apl = 0.0
+        elif dist < planet_pos[2] - width2 / 2:
+            apl = 1.0
         else:
-            if (width/2)<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][3]-(width/2):  #grid completely covered
-                    dfc=1.0 - dsp
-                else:  #grid partially covered
-                    dfc=-(dist-spot_pos[l][3]-width/2)/width - dsp
+            apl = -(dist - planet_pos[2] - width2 / 2) / width2
 
-            else: #if the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                    dfc=(2*spot_pos[l][3]/width)**2 - dsp                
-                else: #grid partially covered
-                    dfc =-2*spot_pos[l][3]*(dist-width/2-spot_pos[l][3])/width**2 - dsp
+    # Apply constraints and adjust area fractions
+    asp, afc, apl = adjust_area_fractions(asp, afc, apl)
 
-        afc+=dfc
+    # Calculate photosphere fraction
+    aph = 1 - asp - afc - apl
+
+    return aph, asp, afc, apl
 
 
-    #PLANET
-    if simulate_planet:
-        if vis[-1]==1.0:
-            dist=m.sqrt((planet_pos[0]*m.cos(planet_pos[1]) - vec_grid[iteration,1])**2 + ( planet_pos[0]*m.sin(planet_pos[1]) - vec_grid[iteration,2] )**2) #grid-planet distance
-            
-            width2=2*m.sin(width/2)
-            if dist>width2/2+planet_pos[2]: apl=0.0
-            elif dist<planet_pos[2]-width2/2: apl=1.0
-            else: apl=-(dist-planet_pos[2]-width2/2)/width2
+@nb.njit(cache=True)
+def calculate_circular_coverage(dist, width, radius):
+    """
+    Calculate the coverage fraction for a circular feature (central grid).
 
-    
-    if afc>1.0:
-        afc=1.0
+    Parameters:
+    -----------
+    dist : float
+        Angular distance between grid center and feature center
+    width : float
+        Width of grid element in radians
+    radius : float
+        Radius of the feature in radians
 
-    if asp>1.0:
-        asp=1.0
-        afc=0.0
+    Returns:
+    --------
+    coverage : float
+        Fraction of grid covered by the feature
+    """
+    # No coverage if feature is too far
+    if dist > (width / 2 + radius):
+        return 0.0
 
-    if apl>1.0:
-        apl=1.0
-        asp=0.0
-        afc=0.0
+    # Feature potentially covers grid completely
+    if (width / 2) < radius:
+        if dist <= radius - (width / 2):  # Grid completely covered
+            return 1.0
+        else:  # Grid partially covered
+            return -(dist - radius - width / 2) / width
 
+    # Grid potentially covers feature completely
+    else:
+        if dist <= (width / 2 - radius):  # Feature completely inside grid
+            return (2 * radius / width) ** 2
+        else:  # Grid partially covered
+            return -2 * radius * (dist - width / 2 - radius) / width ** 2
+
+
+@nb.njit(cache=True)
+def calculate_square_coverage(dist, width, radius):
+    """
+    Calculate the coverage fraction for a circular feature on a square-like grid.
+
+    Parameters:
+    -----------
+    dist : float
+        Angular distance between grid center and feature center
+    width : float
+        Width of grid element in radians
+    radius : float
+        Radius of the feature in radians
+
+    Returns:
+    --------
+    coverage : float
+        Fraction of grid covered by the feature
+    """
+    # No coverage if feature is too far
+    if dist > (width / 2 + radius):
+        return 0.0
+
+    # Feature potentially covers grid completely
+    if (width / m.sqrt(2)) < radius:
+        if dist <= (m.sqrt(radius ** 2 - (width / 2) ** 2) - width / 2):  # Grid completely covered
+            return 1.0
+        else:  # Grid partially covered
+            return -(dist - radius - width / 2) / (width + radius - m.sqrt(radius ** 2 - (width / 2) ** 2))
+
+    # Grid potentially covers feature completely
+    elif (width / 2) > radius:
+        if dist <= (width / 2 - radius):  # Feature completely inside grid
+            return (np.pi / 4) * (2 * radius / width) ** 2
+        else:  # Grid partially covered
+            return (np.pi / 4) * ((2 * radius / width) ** 2 - (2 * radius / width ** 2) * (dist - width / 2 + radius))
+
+    # Feature is larger than grid but not enough to cover it completely
+    else:
+        A1 = (width / 2) * m.sqrt(radius ** 2 - (width / 2) ** 2)
+        A2 = (radius ** 2 / 2) * (m.pi / 2 - 2 * m.asin(m.sqrt(radius ** 2 - (width / 2) ** 2) / radius))
+        Ar = 4 * (A1 + A2) / width ** 2
+        return -Ar * (dist - width / 2 - radius) / (width / 2 + radius)
+
+
+@nb.njit(cache=True)
+def adjust_area_fractions(asp, afc, apl):
+    """
+    Apply constraints to ensure area fractions are physically valid.
+
+    Parameters:
+    -----------
+    asp, afc, apl : float
+        Initial area fractions for spots, faculae, and planet
+
+    Returns:
+    --------
+    asp, afc, apl : float
+        Adjusted area fractions
+    """
+    # Cap individual fractions to 1.0
+    asp = min(asp, 1.0)
+    afc = min(afc, 1.0)
+    apl = min(apl, 1.0)
+
+    # Adjust for spot and facula overlap
     if afc + asp > 1.0:
         afc = 1.0 - asp
 
-    if apl>0.0:
-        asp=asp*(1-apl)
-        afc=afc*(1-apl)
+    # Adjust for planet overlap (planet takes precedence)
+    if apl > 0.0:
+        asp = asp * (1 - apl)
+        afc = afc * (1 - apl)
 
-    aph=1-asp-afc-apl           
-
-    #add the corresponding flux to the total flux
-    flux = flux - (1-aph)*bph[i]+asp*bsp[i]+bfc[i]*afc
-
-
-    Aph=aph*pare[0]
-    Asp=asp*pare[0]
-    Afc=afc*pare[0]
-    Apl=apl*pare[0]
-    typ=[[aph,asp,afc,apl]]
-
-
-    ############### OTHER GRIDS #######################
-    # NOW DO THE SAME FOR THE REST OF GRIDS
-    ###################################################
-    for i in range(1,N): #Loop for each ring.
-        for j in range(Ngrid_in_ring[i]): #Loop for each grid
-            iteration+=1
-
-            dsp=0.0 #fraction covered by each spot
-            dfc=0.0
-            asp=0.0 #fraction covered by all spots
-            afc=0.0
-            apl=0.0
-
-            for l in vis_spots_idx:
-                
-                if spot_pos[l][2]==0.0: #if radius=0, there is no spot, jump to next spot with continue
-                    continue 
-
-                dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #distance between spot centre and grid,multiplying two unit vectors
-
-
-                #SPOT
-                if dist>(width/2+spot_pos[l][2]): #grid not covered 
-                    dsp=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dsp=1.0
-                        else:  #grid partially covered
-                            dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
-
-                    elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                            dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
-                        else: #grid partially covered
-                            dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
-
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
-                        A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
-                        Ar=4*(A1+A2)/width**2
-                        dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
-
-                asp+=dsp
-                #FACULA
-                if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-                    continue 
-                
-                if dist>(width/2+spot_pos[l][3]): #grid not covered by faculae
-                    dfc=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][3]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dfc=1.0-dsp #subtract spot
-                        else:  #grid partially covered
-                            dfc=-(dist-spot_pos[l][3]-width/2)/(width+spot_pos[l][3]-m.sqrt(spot_pos[l][3]**2-(width/2)**2))-dsp
-
-                    elif (width/2)>spot_pos[l][3]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                            dfc=(np.pi/4)*(2*spot_pos[l][3]/width)**2-dsp               
-                        else: #grid partially covered
-                            dfc=(np.pi/4)*((2*spot_pos[l][3]/width)**2-(2*spot_pos[l][3]/width**2)*(dist-width/2+spot_pos[l][3]))-dsp
-
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][3]**2-(width/2)**2)
-                        A2=(spot_pos[l][3]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][3]**2-(width/2)**2)/spot_pos[l][3]))
-                        Ar=4*(A1+A2)/width**2
-                        dfc=-Ar*(dist-width/2-spot_pos[l][3])/(width/2+spot_pos[l][3])-dsp
-
-                afc+=dfc
-
-
-            #PLANET
-            if simulate_planet:
-                if vis[-1]==1.0:
-                    dist=m.sqrt((planet_pos[0]*m.cos(planet_pos[1]) - vec_grid[iteration,1])**2 + ( planet_pos[0]*m.sin(planet_pos[1]) - vec_grid[iteration,2] )**2) #grid-planet distance
-                    
-                    width2=amu[i]*width
-                    if dist>width2/2+planet_pos[2]: apl=0.0
-                    elif dist<planet_pos[2]-width2/2: apl=1.0
-                    else: apl=-(dist-planet_pos[2]-width2/2)/width2
-
-
-            if afc>1.0:
-                afc=1.0
-
-            if asp>1.0:
-                asp=1.0
-                afc=0.0
-
-            if apl>1.0:
-                apl=1.0
-                asp=0.0
-                afc=0.0
-
-            if afc + asp > 1.0:
-                afc = 1.0 - asp
-
-            if apl>0.0:
-                asp=asp*(1-apl)
-                afc=afc*(1-apl)
-
-            aph=1-asp-afc-apl 
-          
-            #add the corresponding ccf to the total CCF
-            flux = flux - (1-aph)*bph[i]+asp*bsp[i]+bfc[i]*afc
-
-            Aph=Aph+aph*pare[i]
-            Asp=Asp+asp*pare[i]
-            Afc=Afc+afc*pare[i]
-            Apl=Apl+apl*pare[i]
-            typ.append([aph,asp,afc,apl])
-            
-
-    return flux ,typ, Aph, Asp, Afc, Apl
-
+    return asp, afc, apl
 
 
 

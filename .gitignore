@@ -1,3 +1,4 @@
 ./*.png
 examples/images
 tests/images
+Dynamo/__pycache__/

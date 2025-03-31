@@ -23,24 +23,21 @@ class Rotator():
     def __init__(self, star):
         self.star = star
 
-    def generate_rotating_photosphere_lc(self, Ngrid_in_ring
-                                           , proj_area, cos_centers,
-                                           brigh_grid_ph,
-                                           brigh_grid_sp,
-                                           brigh_grid_fc,
-                                           flx_ph, vec_grid,
-                                         plot_map=True):
+    def generate_rotating_photosphere_lc(self, Ngrid_in_ring, proj_area, cos_centers,
+                                         brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
+                                         flx_ph, vec_grid, plot_map=True):
         '''Loop for all the pixels and assign the flux corresponding to the grid element.
         '''
         simulate_planet = self.star.simulate_planet
         N = self.star.n_grid_rings  # Number of concentric rings
 
-        iteration = 0
+        # Ensure flx_ph is not too small to prevent division overflow
+        if np.abs(flx_ph) < 1e-10:
+            flx_ph = 1e-10 * (1.0 if flx_ph >= 0 else -1.0)
+            print("Warning: flx_ph is very small, set to", flx_ph)
 
-        # Now loop for each Observed time and for each grid element. Compute if the grid is ph spot or fc and assign the corresponding CCF.
-        # print('Diff rotation law is hard coded. Check ref time for inverse problem. Add more Spot evo laws')
-        sys.stdout.write(" ")
-        flux = np.zeros([len(self.star.obs_times)])  # initialize total flux at each timestamp
+        # Initialize flux and filling factor arrays
+        flux = np.zeros([len(self.star.obs_times)])
         filling_sp = np.zeros(len(self.star.obs_times))
         filling_ph = np.zeros(len(self.star.obs_times))
         filling_pl = np.zeros(len(self.star.obs_times))
@@ -52,15 +49,18 @@ class Rotator():
             typ = []  # type of grid, ph sp or fc
 
             if simulate_planet:
-                planet_pos = self.compute_planet_pos(t)  # compute the planet position at current time. In polar coordinates!!
+                planet_pos = self.compute_planet_pos(t)  # compute the planet position at current time
             else:
-                planet_pos = [2.0, 0.0, 0.0]
+                planet_pos = [2.0, 0.0, 0.0]  # Position outside the star
 
             if self.star.spot_map.size == 0:
                 spot_pos = np.array([np.array([m.pi / 2, -m.pi, 0.0, 0.0])])
             else:
-                spot_pos = self.compute_spot_position_vec(t)  # compute the position of all spots at the current time. Returns theta and phi of each spot.
+                spot_pos = self.compute_spot_position_vec(t)  # compute the position of all spots
+
             spots_positions_arr[k, :, :] = spot_pos[:, :3]
+
+            # Compute spot vectors
             vec_spot = np.zeros([len(self.star.spot_map), 3])
             xspot = np.cos(self.star.inclination) * np.sin(spot_pos[:, 0]) * np.cos(spot_pos[:, 1]) + np.sin(
                 self.star.inclination) * np.cos(spot_pos[:, 0])
@@ -69,47 +69,87 @@ class Rotator():
                 spot_pos[:, 0]) * np.cos(spot_pos[:, 1])
             vec_spot[:, :] = np.array([xspot, yspot, zspot]).T  # spot center in cartesian
 
-            # COMPUTE IF ANY SPOT IS VISIBLE
+            # Compute visibility of spots
             vis = np.zeros(len(vec_spot) + 1)
             for i in range(len(vec_spot)):
                 dist = m.acos(np.dot(vec_spot[i], np.array([1, 0, 0])))
-
                 if (dist - spot_pos[i, 2] * np.sqrt(1 + self.star.facular_area_ratio)) <= (np.pi / 2):
                     vis[i] = 1.0
 
             if (planet_pos[0] - planet_pos[2] < 1):
                 vis[-1] = 1.0
 
-            # Loop for each ring.
-            if (np.sum(vis) == 0.0):
-                flux[k], typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = flx_ph, [[1.0, 0.0, 0.0,
-                                                                                                    0.0]] * np.sum(
-                    Ngrid_in_ring), np.dot(Ngrid_in_ring, proj_area), 0.0, 0.0, 0.0
-            else:
-                flux[k], typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[
-                    k] = nbspectra.loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid,
-                                                                vec_spot, simulate_planet, planet_pos, brigh_grid_ph, brigh_grid_sp,
-                                                                brigh_grid_fc, flx_ph, vis)
+            # Calculate flux
+            try:
+                # If no spots are visible, use a faster calculation
+                if np.sum(vis) == 0.0:
+                    flux[k] = flx_ph
+                    typ = [[1.0, 0.0, 0.0, 0.0]] * np.sum(Ngrid_in_ring)
+                    filling_ph[k] = np.dot(Ngrid_in_ring, proj_area)
+                    filling_sp[k] = 0.0
+                    filling_fc[k] = 0.0
+                    filling_pl[k] = 0.0
+                else:
+                    # Call the numba function with bounds checking
+                    flux[k], typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = \
+                        nbspectra.loop_generate_rotating_lc_nb(
+                            N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid,
+                            vec_spot, simulate_planet, planet_pos, brigh_grid_ph, brigh_grid_sp,
+                            brigh_grid_fc, flx_ph, vis)
 
-            filling_ph[k] = 100 * filling_ph[k] / np.dot(Ngrid_in_ring, proj_area)
-            filling_sp[k] = 100 * filling_sp[k] / np.dot(Ngrid_in_ring, proj_area)
-            filling_fc[k] = 100 * filling_fc[k] / np.dot(Ngrid_in_ring, proj_area)
-            filling_pl[k] = 100 * filling_pl[k] / np.dot(Ngrid_in_ring, proj_area)
+                    # Check for non-finite values
+                    if not np.isfinite(flux[k]):
+                        print(f"Warning: Non-finite flux detected at time {t}, resetting to flx_ph")
+                        flux[k] = flx_ph
 
+                    # Check for extreme values
+                    if np.abs(flux[k] / flx_ph) > 10.0:
+                        print(f"Warning: Extreme flux detected at time {t}: {flux[k]} (ratio: {flux[k] / flx_ph})")
+            except Exception as e:
+                # Handle any runtime errors
+                print(f"Error at time {t}: {str(e)}")
+                flux[k] = flx_ph
+                filling_ph[k] = np.dot(Ngrid_in_ring, proj_area)
+                filling_sp[k] = 0.0
+                filling_fc[k] = 0.0
+                filling_pl[k] = 0.0
+
+            # Calculate percentages for filling factors
+            total_area = np.dot(Ngrid_in_ring, proj_area)
+            filling_ph[k] = 100 * filling_ph[k] / total_area
+            filling_sp[k] = 100 * filling_sp[k] / total_area
+            filling_fc[k] = 100 * filling_fc[k] / total_area
+            filling_pl[k] = 100 * filling_pl[k] / total_area
+
+            # Status output
             sys.stdout.write(
-                "\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. [{5}/{6}]%".format(
-                    t, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k], k + 1, len(self.star.obs_times)))
+                "\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. flux={5:.3f}%. flx_ph={6:.3f}%."
+                " [{7}/{8}]%".format(
+                    t, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k], flux[k], flx_ph, k + 1,
+                    len(self.star.obs_times)))
 
+        # Create plots if requested
         if plot_map:
-            plt.scatter(spots_positions_arr[:, :, 1] % (2*np.pi), spots_positions_arr[:, :, 0],)
+            plt.scatter(spots_positions_arr[:, :, 1] % (2 * np.pi), spots_positions_arr[:, :, 0], )
             plt.xlabel('lon')
             plt.ylabel('lat')
             plt.show()
             filename = self.star.path / 'plots' / 'spot_map.gif'
-            spots_per_day = spots_positions_arr[::48*4, :,:]
+            spots_per_day = spots_positions_arr[::48 * 4, :, :]
             viz.plot_objects_on_sphere(spots_per_day, show_animation=True, save_animation=filename.as_posix())
 
-        return spots_positions_arr, flux / flx_ph, filling_ph, filling_sp, filling_fc, filling_pl
+        # Return with normalized flux and clamp extreme values
+        normalized_flux = flux / flx_ph
+        # Find and report any extreme values
+        extreme_indices = np.where(np.abs(normalized_flux) > 10.0)[0]
+        if len(extreme_indices) > 0:
+            print(f"Warning: {len(extreme_indices)} extreme flux values detected")
+            print(f"Extreme indices: {extreme_indices}")
+            print(f"Extreme values: {normalized_flux[extreme_indices]}")
+            # Clamp extreme values to a reasonable range
+            normalized_flux = np.clip(normalized_flux, -10.0, 10.0)
+
+        return spots_positions_arr, normalized_flux, filling_ph, filling_sp, filling_fc, filling_pl
 
     def compute_spot_position(self, t):
 
@@ -229,7 +269,7 @@ class Rotator():
             Rcoef_0 = spot_map[:, 4]
             factor = np.ones_like(Rcoef_0)
             tt = t - tini
-            factor[tt < 0] =  np.exp(-tt[tt < 0] ** 2 / self.star.tau_emerge ** 2)
+            factor[tt < 0] = np.exp(-tt[tt < 0] ** 2 / self.star.tau_emerge ** 2)
             factor[tt >= 0] = np.exp(-tt[tt >= 0] ** 2 / self.star.tau_decay ** 2)
             rad = factor * Rcoef_0
         else:

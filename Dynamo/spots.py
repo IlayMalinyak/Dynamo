@@ -211,7 +211,7 @@ class SpotsGenerator(object):
             cycle_overlap=2,
             max_lat=28,
             min_lat=7,
-            prob_corr=0.5,
+            prob_corr=0.2,
             max_nspots=np.inf,
             seed=None
 
@@ -283,6 +283,8 @@ class SpotsGenerator(object):
         self.max_lat = max_lat
         self.min_lat = min_lat
         self.prob_corr = prob_corr
+        self.spots_min_prob = 5e-7 * ndays
+        self.spots_max_prob = ndays / 1000
         self.max_nspots = max_nspots
         self.seed = seed
         if self.seed is not None:
@@ -318,7 +320,7 @@ class SpotsGenerator(object):
             tau += 1
             index = (self.tau1 <= tau) & (tau < self.tau2)
             rc0 = np.where(index, prob_corr / (self.tau2 - self.tau1), 0)
-            # create correlation with opposite longitude (arbitrarily, they get half of the original probability)
+            # create correlation with opposite  longitude (arbitrarily, they get half of the original probability)
             opposite_lon = np.linspace(self.nlon // 2, self.nlon + self.nlon // 2, self.nlon) % self.nlon
             rc0[opposite_lon.astype(np.int64), :, :] = rc0[:, :, :] / 2
 
@@ -354,7 +356,7 @@ class SpotsGenerator(object):
                         r0 = ru0[j] + rc0[:, j, k]  # rate per lon, lat, and hem
                         rtot = r0.sum()  # rate per lat, hem
                         sumv = rtot * ftot
-                        x = np.random.uniform(low=0, high=0.5)
+                        x = np.random.uniform(low=self.spots_min_prob, high=self.spots_max_prob)
                         if sumv > x:  # emerge spot
                             # determine bipole size
                             nb = 0
