@@ -283,8 +283,8 @@ class SpotsGenerator(object):
         self.max_lat = max_lat
         self.min_lat = min_lat
         self.prob_corr = prob_corr
-        self.spots_min_prob = 5e-7 * ndays
-        self.spots_max_prob = ndays / 1000
+        self.spots_min_prob = 5e-7 * ndays # this is arbitrary. needs a better way to constrain n_spots with uniform distribution
+        self.spots_max_prob = ndays / 1000 # same
         self.max_nspots = max_nspots
         self.seed = seed
         if self.seed is not None:

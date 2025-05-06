@@ -7,6 +7,7 @@ import os
 import json
 import logging
 import multiprocessing as mp
+from planet_params import generate_planet_parameters
 from functools import partial
 from tqdm import tqdm
 from Dynamo.star import Star
@@ -25,7 +26,7 @@ G = 6.67 * 1e-8
 M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
-DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset_test'
+DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset_ar_relation'
 MODELS_ROOT = r'C:\Users\Ilay\projects\simulations\starsim\starsim'
 
 os.makedirs(DATASET_DIR, exist_ok=True)
@@ -40,6 +41,37 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+def truncated_normal_dist(mean, std, lower_bound, upper_bound, size):
+    a = (lower_bound - mean) / std
+    b = (upper_bound - mean) / std
+    return stats.truncnorm.rvs(a, b, loc=mean, scale=std, size=size)
+
+
+def age_activity_relation(age, saturation_age_gyr=0.1):
+    """
+    Calculate the age activity relation between star and saturation age
+    relations taken from :
+    "The coronal X-ray–age relation and its implications for the evaporation of exoplanets", Jackson et al.
+    "An Improved Age-Activity Relationship for Cool Stars older than a Gigayear" Booth et al.
+    :param age: age array in gyr
+    :param saturation_age_gyr: stauration age (see Jackson et al.)
+    :return: activity array
+    """
+    ar = (age / AGE_SUN) ** (-2.8)
+    old_indices = np.where(age > 1)[0]
+    transition_idx_up = np.argmin(age[old_indices] - 1)
+    transition_value_up = ar[old_indices][transition_idx_up]
+    young_indices = np.where(age <= 1)[0]
+    ar[young_indices] = (age[young_indices] / AGE_SUN) ** (-1.2)
+    transition_idx_low = np.argmin(1 - age[young_indices])
+    transition_value_low = ar[young_indices][transition_idx_low]
+    diff = transition_value_up - transition_value_low
+    ar[young_indices] += diff
+    saturation_idx = np.where(age < saturation_age_gyr)[0]
+    closest_idx = np.argmin(np.abs(saturation_age_gyr - age))
+    ar[saturation_idx] = ar[closest_idx]
+    return ar
 
 
 def generate_simdata(root, Nlc, sim_name='dataset'):
@@ -59,8 +91,8 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     mass = sample_kroupa_imf(Nlc, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=Nlc)
-    ages = np.clip(np.random.normal(4.5, 2, size=Nlc), a_min=0.1, a_max=10)
-    ar = (ages / AGE_SUN) ** (-0.5) / 2
+    ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=Nlc)
+    ar = age_activity_relation(ages, saturation_age_gyr=0.2)
     theta_low = np.random.uniform(low=0, high=20, size=Nlc)
     theta_high = np.random.uniform(low=theta_low, high=90 * ar, size=Nlc)
     mask = theta_high > 90
@@ -85,6 +117,7 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     flicker = np.random.uniform(0, 0.3, size=Nlc)
     np.random.shuffle(diffrot_shear)
     omega = 2 * np.pi / prot  # rad / day
+    planet_params = generate_planet_parameters(mass, R, planet_prob=0.1)
 
     # Stitch this all together and write the simulation properties to file
     sims = {}
@@ -111,6 +144,16 @@ def generate_simdata(root, Nlc, sim_name='dataset'):
     sims['CDPP'] = cdpp
     sims['Outlier Rate'] = outlier_rate
     sims['Flicker Time Scale'] = flicker
+    sims['simulate_planet'] = planet_params['simulate_planet']
+    sims['planet_period'] = planet_params['period']
+    sims['planet_radius'] = planet_params['radius']
+    sims['planet_esinw'] = planet_params['esinw']
+    sims['planet_ecosw'] = planet_params['ecosw']
+    sims['planet_impact'] = planet_params['impact']
+    sims['planet_spin_orbit_angle'] = planet_params['spin_orbit_angle']
+    sims['planet_transit_t0'] = planet_params['transit_t0']
+    sims['planet_semi_amplitude'] = planet_params['semi_amplitude']
+
 
     sims = pd.DataFrame.from_dict(sims)
     sims.to_csv(os.path.join(root, "simulation_properties.csv"), float_format="%5.4f", index_label="Simulation Number")
@@ -204,6 +247,7 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
         # Create StarSim object and set parameters
         sm = Star(conf_file_path='starsim.conf')
         sm.set_stellar_parameters(sim_row)
+        sm.set_planet_parameters(sim_row)
         sm.models_root = MODELS_ROOT
 
         # Generate spot map
@@ -238,6 +282,8 @@ def simulate_one(sim_row, sim_dir, idx, freq_rate=1 / 48, ndays=1000, wv_array=N
                     'rotation_period': float(sim_row['Period']),
                     'differential_rotation': float(sim_row['Shear']),
                 },
+                'planet_params': {k:v for k, v in sim_row.items() if 'planet' in k} ,
+
                 'activity_params': {
                     'activity_rate': float(sim_row['Activity Rate']),
                     'cycle_length': float(sim_row['Cycle Length']),
@@ -332,7 +378,6 @@ def main():
     else:
         # Generate 5000 simulations
         sims = generate_simdata(DATASET_DIR, 5000)
-    sims = sims.iloc[39:]
     # Load wavelength array for LAMOST spectra
     wv_array = np.load('lamost_wv.npy')
 

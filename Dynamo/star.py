@@ -104,6 +104,7 @@ class Star:
         self.plot_grid_map = self._get_config_value('spots', 'plot_grid_map', int)
         self.reference_time = self._get_config_value('spots', 'reference_time', float)
         self.spots_decay_time = self._get_config_value('spots', 'spots_decay_time', float)
+        self.max_n_spots = self._get_config_value('spots', 'max_n_spots', float)
 
 
     def _initialize_noise_params(self):
@@ -202,6 +203,18 @@ class Star:
         self.butterfly = params_dict['Butterfly']
 
 
+    def set_planet_parameters(self, params_dict):
+        self.simulate_planet = params_dict['simulate_planet']
+        self.planet_period = params_dict['planet_period']
+        self.planet_transit_t0 = params_dict['planet_transit_t0']
+        self.planet_radius = params_dict['planet_radius']
+        self.planet_impact_param = params_dict['planet_impact']
+        self.planet_esinw = params_dict['planet_esinw']
+        self.planet_ecosw = params_dict['planet_ecosw']
+        self.planet_spin_orbit_angle = params_dict['planet_spin_orbit_angle']
+        self.planet_semi_amplitude = params_dict['planet_semi_amplitude']
+
+
     def generate_spot_map(self, ndays):
         s = spots.SpotsGenerator()
         regions = s.emerge_regions(
@@ -212,10 +225,10 @@ class Star:
             max_lat=self.spot_max_lat,
             min_lat=self.spot_min_lat,
             butterfly=self.butterfly,
-            max_nspots=200,
+            max_nspots=self.max_n_spots,
             seed=1234
         )
-        ref_time = regions[0]['nday']
+        ref_time = regions[0]['nday'] if len(regions) > 0 else 0
         regions['nday'] -= ref_time
         self.reference_time = 0
         spots_config = np.zeros((len(regions), 14))
@@ -226,29 +239,27 @@ class Star:
         spots_config[:, 3] = np.rad2deg((regions['phpos'] + regions['phneg']) / 2)
         spots_config[:, 4] = np.sqrt(regions['bmax']) # bmax is proportional to area (radius ** 2)
         self.spot_map = spots_config
-        self.n_grid_rings = int(max(10, 120/(spots_config[:, 4].min())))
-        print("number of spots: ", len(regions), 'bmax: ', regions['bmax'].mean(),
-              regions['bmax'].max(), regions['bmax'].min(), 'spots_duration: ', spots_duration)
+        self.n_grid_rings = int(max(10, 120/(spots_config[:, 4].min()))) if len(spots_config) > 0 else 10
+        print("number of spots: ", len(regions), 'activity: ', self.activity)
         print("number of grid rings: ", self.n_grid_rings)
 
     def create_lamost_spectra(self, wv_array, ff_sp):
         mu, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
-                                                                     self.temperature_photosphere,
-                                                                     self.logg,
-                                                                     wv_array=wv_array)  # sini is the angles at which the model is computed.
+                                                                   self.temperature_photosphere,
+                                                                   self.logg,
+                                                                   wv_array=wv_array)
         mu, wvp_lc, spot_flux = spectra.interpolate_Phoenix_mu_lc(self,
-                                                                    self.temperature_spot,
-                                                                    self.logg,
-                                                                    wv_array=wv_array)
+                                                                  self.temperature_spot,
+                                                                  self.logg,
+                                                                  wv_array=wv_array)
         disk_integrated_photo = np.zeros(len(wv_array))
         disk_integrated_spot = np.zeros(len(wv_array))
 
         # Assuming mu contains the μ values (cos(θ))
         for i in range(len(mu) - 1):
-            weight = mu[i] * (mu[i + 1] ** 2 - mu[i] ** 2)
+            weight = mu[i] * (mu[i] ** 2 - mu[i + 1] ** 2)
             disk_integrated_photo += photo_flux[i] * weight
             disk_integrated_spot += spot_flux[i] * weight
-
         wavelength_step = wv_array[1] - wv_array[0]  # assuming uniform sampling
         central_wavelength = np.median(wv_array)
         sigma_pixels = (central_wavelength / (2.355 * 1800)) / wavelength_step
@@ -256,9 +267,8 @@ class Star:
         # Apply Gaussian broadening
         lamost_photo_flux = gaussian_filter1d(disk_integrated_photo, sigma_pixels)
         lamost_spot_flux = gaussian_filter1d(disk_integrated_spot, sigma_pixels)
-        fill_factor = ff_sp.mean()
+        fill_factor = ff_sp.mean() / 100
         combined_spectrum = (1 - fill_factor) * lamost_photo_flux + fill_factor * lamost_spot_flux
-
         if self.spectra_filter_name != 'None':
             lamost_sensitivity = spectra.interpolate_filter(self, self.spectra_filter_name)
         else:
@@ -273,13 +283,21 @@ class Star:
         wavelength_dependent_snr = base_snr * np.sqrt(lamost_sensitivity / np.max(lamost_sensitivity))
 
         # Generate noise based on wavelength-dependent SNR
-        noise = np.zeros_like(combined_spectrum)
+        combined_spectrum_with_noise = np.zeros_like(combined_spectrum)
         for i in range(len(wv_array)):
             if combined_spectrum[i] > 0 and wavelength_dependent_snr[i] > 0:
                 local_noise_level = combined_spectrum[i] / wavelength_dependent_snr[i]
-                noise[i] = np.random.normal(0, local_noise_level)
+                # Method 1: Using truncated Gaussian noise (ensures non-negative values)
+                noise = np.random.normal(0, local_noise_level)
+                # Ensure the flux is never negative
+                combined_spectrum_with_noise[i] = max(combined_spectrum[i] + noise, 0)
 
-        combined_spectrum_with_noise = combined_spectrum + noise
+                # Alternative Method 2 (commented out): Using Poisson noise
+                # mean_counts = combined_spectrum[i] * 1000  # Scale to reasonable photon counts
+                # counts = np.random.poisson(mean_counts)
+                # combined_spectrum_with_noise[i] = counts / 1000  # Scale back
+            else:
+                combined_spectrum_with_noise[i] = 0  # Set to zero if original flux is zero or negative
 
         return combined_spectrum_with_noise
 
@@ -337,6 +355,7 @@ class Star:
         return sensitivity
 
     def compute_forward(self, t=None, wv_array=None):
+        print(f"\ncomputing forward with: {len(self.spot_map)} spots and {int(self.simulate_planet)} planets")
         self.inclination = np.deg2rad(self.inclination)
         # self.spot_T_contrast = np.random.randint(low=self.spot_T_contrast_min, high=self.spot_T_contrast_max)
         self.spot_T_contrast = 200

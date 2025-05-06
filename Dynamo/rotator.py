@@ -299,8 +299,8 @@ class Rotator():
             ecc = np.sqrt(self.star.planet_esinw ** 2 + self.star.planet_ecosw ** 2)
             omega = np.arctan2(self.star.planet_esinw, self.star.planet_ecosw)
 
-        t_peri = Ttrans_2_Tperi(self.star.planet_transit_t0, self.star.planet_period, ecc, omega)
-        sinf, cosf = true_anomaly([t], self.star.planet_period, ecc, t_peri)
+        t_peri = nbspectra.Ttrans_2_Tperi(self.star.planet_transit_t0, self.star.planet_period, ecc, omega)
+        sinf, cosf = nbspectra.true_anomaly(t, self.star.planet_period, ecc, t_peri)
 
         cosftrueomega = cosf * np.cos(omega + np.pi / 2) - sinf * np.sin(
             omega + np.pi / 2)  # cos(f+w)=cos(f)*cos(w)-sin(f)*sin(w)
