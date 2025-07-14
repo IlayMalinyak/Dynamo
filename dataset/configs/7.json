@@ -1,0 +1,46 @@
+{
+    "stellar_params": {
+        "mass": 0.3611,
+        "age": 1.521,
+        "metallicity": 0.0442,
+        "alpha": 0.387,
+        "Teff": 3296.1587,
+        "logg": 4.8999,
+        "luminosity": 0.0132,
+        "radius": 0.3524,
+        "inclination": 1.4043,
+        "rotation_period": 0.5838,
+        "differential_rotation": 0.3853
+    },
+    "planet_params": {
+        "simulate_planet": 0.0,
+        "planet_period": 0.0,
+        "planet_radius": 0.0,
+        "planet_esinw": 0.0,
+        "planet_ecosw": 0.0,
+        "planet_impact": 0.0,
+        "planet_spin_orbit_angle": 0.0,
+        "planet_transit_t0": 0.0,
+        "planet_semi_amplitude": 0.0
+    },
+    "activity_params": {
+        "activity_rate": 22.1697,
+        "cycle_length": 11.7532,
+        "cycle_overlap": 0.1495,
+        "spot_min_latitude": 17.9314,
+        "spot_max_latitude": 36.5948,
+        "spot_decay_time": 7.7403,
+        "butterfly_pattern": false
+    },
+    "simulation_params": {
+        "num_days": 100,
+        "num_spots": 47,
+        "sampling_rate": 0.020833333333333332,
+        "num_points": 4800,
+        "evolution_law": "gaussian",
+        "wavelength_range": [
+            3699.986328125,
+            9099.134765625
+        ]
+    }
+}

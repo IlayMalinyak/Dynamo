@@ -225,7 +225,6 @@ class Star:
             max_lat=self.spot_max_lat,
             min_lat=self.spot_min_lat,
             butterfly=self.butterfly,
-            max_nspots=self.max_n_spots,
             seed=1234
         )
         ref_time = regions[0]['nday'] if len(regions) > 0 else 0
@@ -252,6 +251,7 @@ class Star:
                                                                   self.temperature_spot,
                                                                   self.logg,
                                                                   wv_array=wv_array)
+        print("\nphoto flux: ", np.sum(photo_flux), 'wv_array: ', wv_array, 'ff_sp: ', ff_sp)
         disk_integrated_photo = np.zeros(len(wv_array))
         disk_integrated_spot = np.zeros(len(wv_array))
 
@@ -260,6 +260,7 @@ class Star:
             weight = mu[i] * (mu[i] ** 2 - mu[i + 1] ** 2)
             disk_integrated_photo += photo_flux[i] * weight
             disk_integrated_spot += spot_flux[i] * weight
+        print("\ndisk_integrated_photo: ", np.sum(disk_integrated_photo))
         wavelength_step = wv_array[1] - wv_array[0]  # assuming uniform sampling
         central_wavelength = np.median(wv_array)
         sigma_pixels = (central_wavelength / (2.355 * 1800)) / wavelength_step
@@ -275,6 +276,7 @@ class Star:
             lamost_sensitivity = self.create_synthetic_lamost_sensitivity(wv_array)
 
         combined_spectrum = combined_spectrum * lamost_sensitivity
+        print("\ncombined_spectrum: ", np.sum(combined_spectrum))
 
         # Apply rotational broadening
         combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, self.vsini)
@@ -297,7 +299,7 @@ class Star:
                 # counts = np.random.poisson(mean_counts)
                 # combined_spectrum_with_noise[i] = counts / 1000  # Scale back
             else:
-                combined_spectrum_with_noise[i] = 0  # Set to zero if original flux is zero or negative
+                combined_spectrum_with_noise[i] = combined_spectrum[i]
 
         return combined_spectrum_with_noise
 

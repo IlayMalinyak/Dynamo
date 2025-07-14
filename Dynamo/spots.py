@@ -201,10 +201,10 @@ class SpotsGenerator(object):
         """
         assert self.regions is not None, "Set `regions` first with `Surface.emerge_regions`."
 
-
     def emerge_regions(
             self,
             ndays=1000,
+            nspots=None,  # New parameter to directly control number of spots
             activity_level=1,
             butterfly=True,
             cycle_period=11,
@@ -212,69 +212,19 @@ class SpotsGenerator(object):
             max_lat=28,
             min_lat=7,
             prob_corr=0.2,
-            max_nspots=np.inf,
             seed=None
-
     ):
         """
-        Simulates the emergence and evolution of starspots.
-        Output is a Table of active regions.
+        Simulates the emergence of starspots with uniform temporal distribution.
 
         Args:
-            ndays (int, optional, default=1000): Number of days to emerge spots.
-            activity_level (float, optional, default=1): Number of magnetic
-                bipoles, normalized such that for the Sun, activity_level = 1.
-            butterfly (bool, optional, default=True): Have spots decrease
-                from maxlat to minlat (True) or be randomly located in
-                latitude (False).
-            cycle_period (float, optional, default=11): Interval (years)
-                between cycle starts (Sun is 11).
-            cycle_overlap (float, optional, default=2): Overlap of cycles in
-                years.
-            max_lat (float, optional, default=28): Maximum latitude of spot
-                emergence in degrees.
-            min_lat (float, optional, default=7): Minimum latitutde of spot
-                emergence in degrees.
-            prob_corr (float, optional, default=0.001): The probability of
-                correlated active region emergence (relative to uncorrelated
-                emergence).
-
-        Returns:
-            regions: astropy Table where each row is an active region with
-                the following parameters:
-
-                nday  = day of emergence
-                thpos = theta of positive pole (radians)
-                phpos = phi   of positive pole (radians)
-                thneg = theta of negative pole (radians)
-                phneg = phi   of negative pole (radians)
-                width = width of each pole (radians)
-                bmax  = maximum flux density (Gauss)
-
-        Notes:
-            Based on Section 4 of van Ballegooijen 1998, ApJ 501: 866
-            and Schrijver and Harvey 1994, SoPh 150: 1S.
-
-            According to Schrijver and Harvey (1994), the number of active regions
-            emerging with areas in the range [A,A+dA] in a time dt is given by
-
-                n(A,t) dA dt = a(t) A^(-2) dA dt ,
-
-            where A is the "initial" area of a bipole in square degrees, and t is
-            the time in days; a(t) varies from 1.23 at cycle minimum to 10 at cycle
-            maximum.
-
-            The bipole area is the area within the 25-Gauss contour in the
-            "initial" state, i.e. time of maximum development of the active region.
-            The assumed peak flux density in the initial state is 1100 G, and
-            width = 0.4*bsiz. The parameters are corrected for further diffusion and
-            correspond to the time when width = 4 deg, the smallest width that can be
-            resolved with lmax=63.
-
-            We use a lower value of a(t) to account for "correlated" regions.
-
+            ndays (int): Number of days to emerge spots
+            nspots (int, optional): Total number of spots to emerge. If None,
+                                   calculated from activity_level
+            activity_level (float): Used to calculate nspots if not provided
+            ... (other parameters same as before)
         """
-        # set attributes
+        # Set attributes
         self.duration = ndays
         self.activity_level = activity_level
         self.butterfly = butterfly
@@ -283,102 +233,97 @@ class SpotsGenerator(object):
         self.max_lat = max_lat
         self.min_lat = min_lat
         self.prob_corr = prob_corr
-        self.spots_min_prob = 5e-7 * ndays # this is arbitrary. needs a better way to constrain n_spots with uniform distribution
-        self.spots_max_prob = ndays / 1000 # same
-        self.max_nspots = max_nspots
         self.seed = seed
+
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        # factor from integration over bin size (I think)
-        dcon = np.exp(0.5 * self.delta_lnA) - np.exp(-0.5 * self.delta_lnA)
+        # Calculate total number of spots if not provided
+        if nspots is None:
 
-        amplitude = 10 * activity_level
-        ncycle = 365 * cycle_period
-        nclen = 365 * (cycle_period + cycle_overlap)
+            base_rate = 0.1 * np.sqrt(activity_level)  # spots per day. No theoretical intuition.
+            nspots = int(base_rate * ndays)
 
-        fact = np.exp(self.delta_lnA * np.arange(self.nbins))  # array of area reduction factors
-        ftot = fact.sum()  # sum of reduction factors
-        bsiz = np.sqrt(self.max_area / fact)  # array of bipole separations (deg)
-        tau = np.zeros((self.nlon, self.nlat, 2), dtype=int) + self.tau2
-        dlon = 360 / self.nlon
+        self.nspots = nspots
 
-        if butterfly:  # Really we want spots to emerge in a
-            l1 = max(min_lat - 7, 0)  # range around the average active lat,
-            l2 = min(max_lat + 7, 90)  # so we bump the boundaries a bit.
-        else:
-            l1, l2 = min_lat, max_lat
-        dlat = (l2 - l1) / self.nlat
+        # Pre-allocate emergence times uniformly
+        emergence_times = np.sort(np.random.choice(ndays, size=nspots, replace=True))
 
+        # Initialize regions table
         self.regions = Table(names=('nday', 'thpos', 'phpos', 'thneg', 'phneg', 'width', 'bmax', 'ang'),
                              dtype=(int, float, float, float, float, float, float, float))
 
-        for nday in np.arange(ndays, dtype=int):
-            # Emergence rates for correlated regions
-            # Note that correlated emergence only occurs for the largest regions,
-            # i.e., for bsiz[0]
-            tau += 1
-            index = (self.tau1 <= tau) & (tau < self.tau2)
-            rc0 = np.where(index, prob_corr / (self.tau2 - self.tau1), 0)
-            # create correlation with opposite  longitude (arbitrarily, they get half of the original probability)
-            opposite_lon = np.linspace(self.nlon // 2, self.nlon + self.nlon // 2, self.nlon) % self.nlon
-            rc0[opposite_lon.astype(np.int64), :, :] = rc0[:, :, :] / 2
+        # Setup parameters (same as original)
+        ncycle = 365 * cycle_period
+        nclen = 365 * (cycle_period + cycle_overlap)
+        amplitude = 10 * activity_level
 
-            if len(self.regions) >= self.max_nspots:
-                break
+        if butterfly:
+            l1 = max(min_lat - 7, 0)
+            l2 = min(max_lat + 7, 90)
+        else:
+            l1, l2 = min_lat, max_lat
+        dlat = (l2 - l1) / self.nlat
+        dlon = 360 / self.nlon
 
-            ncur = nday // ncycle  # index of current active cycle
-            for icycle in [0, 1]:  # loop over current and previous cycle
-                nc = ncur - icycle  # index of current or previous cycle
-                nstart = ncycle * nc  # start day of cycle
-                phase = (nday - nstart) / nclen  # phase relative to cycle start day
-                if not (0 <= phase <= 1):  # phase outside of [0, 1] is nonphysical
+        # Area and size calculations
+        fact = np.exp(self.delta_lnA * np.arange(self.nbins))
+        bsiz = np.sqrt(self.max_area / fact)
+
+        # Process each spot
+        for spot_idx, nday in enumerate(emergence_times):
+            nday = int(nday)
+
+            # Determine cycle parameters
+            ncur = nday // ncycle
+            cycle_found = False
+
+            for icycle in [0, 1]:
+                nc = ncur - icycle
+                nstart = ncycle * nc
+                phase = (nday - nstart) / nclen
+
+                if not (0 <= phase <= 1):
                     continue
 
-                # Determine active latitude bins
-                if butterfly:
-                    latavg, latrms = exponential_latitudes(min_lat, max_lat, phase)
-                else:
-                    latavg, latrms = random_latitudes(min_lat, max_lat)
+                cycle_found = True
+                break
 
-                # Compute emergence probabilities
+            if not cycle_found:
+                # Default to first cycle if no valid cycle found
+                nc = 0
+                phase = 0.5
 
-                # Emergence rate of largest uncorrelated regions (number per day,
-                # both hemispheres), from Shrijver and Harvey (1994)
-                ru0_tot = amplitude * np.sin(np.pi * phase) ** 2 * dcon / self.max_area
-                # Uncorrelated emergence rate per lat/lon bin, as function of lat
-                jlat = np.arange(self.nlat, dtype=int)
-                p = np.exp(-((l1 + dlat * (0.5 + jlat) - latavg) / latrms) ** 2)
-                ru0 = ru0_tot * p / (p.sum() * self.nlon * 2)
+            # Determine latitude distribution
+            if butterfly:
+                latavg, latrms = exponential_latitudes(min_lat, max_lat, phase)
+            else:
+                latavg, latrms = random_latitudes(min_lat, max_lat)
 
-                for k in [0, 1]:  # loop over hemisphere and latitude
-                    for j in jlat:
-                        r0 = ru0[j] + rc0[:, j, k]  # rate per lon, lat, and hem
-                        rtot = r0.sum()  # rate per lat, hem
-                        sumv = rtot * ftot
-                        x = np.random.uniform(low=self.spots_min_prob, high=self.spots_max_prob)
-                        if sumv > x:  # emerge spot
-                            # determine bipole size
-                            nb = 0
-                            sumb = rtot * fact[0]
-                            while x > sumb:
-                                nb += 1
-                                sumb += rtot * fact[nb]
-                            bsize = bsiz[nb]
+            # Sample latitude based on distribution
+            jlat = np.arange(self.nlat, dtype=int)
+            lat_centers = l1 + dlat * (0.5 + jlat)
+            lat_probs = np.exp(-((lat_centers - latavg) / latrms) ** 2)
+            lat_probs = lat_probs / lat_probs.sum()
 
-                            # determine longitude
-                            i = 0
-                            sumb += (r0[0] - rtot) * fact[nb]
-                            while x > sumb:
-                                i += 1
-                                sumb += r0[i] * fact[nb]
-                            lon = dlon * (np.random.uniform() + i)
-                            lat = l1 + dlat * (np.random.uniform() + j)
+            # Choose latitude bin
+            j = np.random.choice(jlat, p=lat_probs)
+            lat = l1 + dlat * (np.random.uniform() + j)
 
-                            self._add_region_cycle(nday, nc, lat, lon, k, bsize)
+            # Choose hemisphere (North or South)
+            k = np.random.choice([0, 1])
 
-                            if nb == 0:
-                                tau[i, j, k] = 0
+            # Choose longitude uniformly
+            lon = np.random.uniform(0, 360)
+
+            # Choose bipole size based on power law distribution
+            # Sample from power law: P(A) ~ A^(-2)
+            size_probs = fact / fact.sum()
+            nb = np.random.choice(self.nbins, p=size_probs)
+            bsize = bsiz[nb]
+
+            # Add the region
+            self._add_region_cycle(nday, nc, lat, lon, k, bsize)
 
         return self.regions
 
@@ -482,3 +427,49 @@ class SpotsGenerator(object):
         thneg = thcen - dth
 
         self.regions.add_row([nday, thpos, phpos, thneg, phneg, bmax])
+
+    def plot_emergence_distribution(self, bins=50):
+        """
+        Plot the temporal distribution of spot emergence to verify uniformity.
+        """
+        if self.regions is None:
+            print("No regions generated yet. Run emerge_regions first.")
+            return
+
+        plt.figure(figsize=(12, 6))
+
+        # Plot histogram of emergence times
+        plt.subplot(1, 2, 1)
+        plt.hist(self.regions['nday'], bins=bins, alpha=0.7, edgecolor='black')
+        plt.xlabel('Day')
+        plt.ylabel('Number of Spots')
+        plt.title('Temporal Distribution of Spot Emergence')
+        plt.grid(True, alpha=0.3)
+
+        # Plot cumulative distribution
+        plt.subplot(1, 2, 2)
+        sorted_days = np.sort(self.regions['nday'])
+        cumulative = np.arange(1, len(sorted_days) + 1)
+        plt.plot(sorted_days, cumulative, 'b-', linewidth=2)
+
+        # Plot ideal uniform distribution for comparison
+        if len(sorted_days) > 0:
+            ideal_days = np.linspace(sorted_days[0], sorted_days[-1], len(sorted_days))
+            ideal_cumulative = np.arange(1, len(sorted_days) + 1)
+            plt.plot(ideal_days, ideal_cumulative, 'r--', linewidth=2, label='Ideal Uniform')
+
+        plt.xlabel('Day')
+        plt.ylabel('Cumulative Number of Spots')
+        plt.title('Cumulative Spot Distribution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+        # Print statistics
+        if len(self.regions) > 0:
+            print(f"Total spots: {len(self.regions)}")
+            print(f"Duration: {self.duration} days")
+            print(f"Average rate: {len(self.regions) / self.duration:.3f} spots/day")
+            print(f"Time range: {self.regions['nday'].min()} to {self.regions['nday'].max()}")

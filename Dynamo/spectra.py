@@ -12,46 +12,6 @@ from . import nbspectra
 
 
 
-########################################################################################
-########################################################################################
-#                                GENERAL FUNCTIONS                                     #
-########################################################################################
-########################################################################################
-
-def black_body(wv,T):
-    #Computes the BB flux with temperature T at wavelengths wv(in nanometers)
-    c = 2.99792458e10 #speed of light in cm/s
-    k = 1.380658e-16  #boltzmann constant
-    h = 6.6260755e-27 #planck
-    w=wv*1e-8 #Angstrom to cm
-    bb=2*h*c**2*w**(-5)*(np.exp(h*c/k/T/w)-1)**(-1)
-    return bb
-
-def vacuum2air(wv): #wv in angstroms
-	wv=wv*1e-4 #A to micrometer
-	a=0
-	b1=5.792105e-2
-	b2=1.67917e-3
-	c1=238.0185
-	c2=57.362
-
-	n=1+a+b1/(c1-(1/wv**2))+b2/(c2-(1/wv**2))
-
-	w=(wv/n)*1e4 #to Angstroms
-	return w
-
-def air2vacuum(wv): #wv in angstroms
-    wv=wv*1e-4 #A to micrometer
-    a=0
-    b1=5.792105e-2
-    b2=1.67917e-3
-    c1=238.0185
-    c2=57.362
-
-    n=1+a+b1/(c1-(1/wv**2))+b2/(c2-(1/wv**2))
-
-    w=(wv*n)*1e4 #to Angstroms
-    return w
 
 ########################################################################################
 ########################################################################################
@@ -403,82 +363,6 @@ def calculate_differential_vsini(self, n_rings, vsini_equator, mu_values):
     return vsini_rings
 
 
-def apply_line_broadening_to_all_filters(wavelength, flux, resolution=None, vsini=None, macroturb=None):
-    """
-    Apply various broadening mechanisms to a spectrum.
-
-    Parameters:
-    wavelength : array-like
-        Wavelength array in Angstroms
-    flux : array-like
-        Flux array
-    resolution : float, optional
-        Spectral resolution (R = λ/Δλ)
-    vsini : float, optional
-        Projected rotational velocity in km/s
-    macroturb : float, optional
-        Macroturbulence velocity in km/s
-
-    Returns:
-    array-like
-        Broadened flux array
-    """
-    # Make a copy to avoid modifying the original
-    broadened_flux = np.copy(flux)
-
-    # Apply rotational broadening
-    if vsini is not None and vsini > 0:
-        broadened_flux = apply_rotational_broadening(wavelength, broadened_flux, vsini)
-
-    # Apply instrumental broadening based on resolution
-    if resolution is not None and resolution > 0:
-        # Calculate sigma in wavelength units
-        sigma_lambda = wavelength / resolution
-
-        # Apply Gaussian broadening
-        for i in range(len(wavelength)):
-            sigma = sigma_lambda[i]
-            kernel_width = int(np.ceil(5 * sigma / np.mean(np.diff(wavelength))))
-            if kernel_width % 2 == 0:
-                kernel_width += 1
-
-            if kernel_width > 3:  # Only apply if kernel is big enough
-                x = np.linspace(-kernel_width // 2, kernel_width // 2, kernel_width)
-                kernel = np.exp(-0.5 * (x / sigma) ** 2)
-                kernel = kernel / np.sum(kernel)
-
-                # Apply convolution to a segment around the current wavelength
-                half_width = kernel_width // 2
-                idx_start = max(0, i - half_width * 2)
-                idx_end = min(len(wavelength), i + half_width * 2 + 1)
-
-                if idx_end - idx_start > kernel_width:
-                    segment = broadened_flux[idx_start:idx_end]
-                    segment_convolved = signal.convolve(segment, kernel, mode='same')
-                    broadened_flux[idx_start:idx_end] = segment_convolved
-
-    # Apply macroturbulent broadening (similar to instrumental but with different kernel)
-    if macroturb is not None and macroturb > 0:
-        c = 299792.458  # Speed of light in km/s
-        # Convert macroturbulence velocity to wavelength
-        sigma = wavelength.mean() * macroturb / c
-
-        # Calculate width of kernel in array elements
-        delta_lambda = np.mean(np.diff(wavelength))
-        kernel_width = int(np.ceil(5 * sigma / delta_lambda))
-        if kernel_width % 2 == 0:
-            kernel_width += 1
-
-        # Create Gaussian kernel for macroturbulence
-        x = np.linspace(-kernel_width // 2, kernel_width // 2, kernel_width) * delta_lambda / sigma
-        kernel = np.exp(-0.5 * x ** 2)
-        kernel = kernel / np.sum(kernel)
-
-        # Apply the kernel via convolution
-        broadened_flux = signal.convolve(broadened_flux, kernel, mode='same')
-
-    return broadened_flux
-
 def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
 
 
@@ -488,7 +372,7 @@ def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
     flp=np.zeros([N,len(wv)]) #spectra of each ring convolved by filter
 
     #Computing flux of immaculate photosphere and of every pixel
-    for i in range(0,N): #Loop for each ring, to compute the flux of the star.   
+    for i in range(0,N): #Loop for each ring, to compute the flux of the star.
 
         #Interpolate Phoenix intensity models to correct projected ange:
         if self.use_phoenix_limb_darkening:
@@ -497,19 +381,17 @@ def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
             idx_low=np.where(acd==acd_low)[0][0]
             idx_upp=np.where(acd==acd_upp)[0][0]
             dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
+
         else: #or use a specified limb darkening law
             dlp = flnp[0]*limb_darkening_law(self,amu[i])
 
 
         flp[i,:]=dlp*pare[i]/(4*np.pi)*f_filt(wv) #spectra of one grid in ring N multiplied by the filter.
-        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.  
+        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.
         flxph=flxph+sflp[i]*Ngrid_in_ring[i] #total BRIGHTNESS of the immaculate photosphere
-    
-    
+
+
     return sflp, flxph
-
-
 
 def compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
     '''Compute thespectra of each grid element adding LD.
@@ -733,115 +615,6 @@ def interpolate_Phoenix(self,temp,grav,plot=False):
     interpolated_spectra = np.array([wv,flux_norm])
 
     return interpolated_spectra
-
-
-
-def bisector_fit(self,rv,ccf,plot_test=False,kind_interp='linear',integrated_bis=False):
-    ''' Fit the bisector of the CCF with a 5th deg polynomial
-    '''
-    xnew,ynew,xbis,ybis=nbspectra.speed_bisector_nb(rv,ccf,integrated_bis)
-
-    f = interpolate.interp1d(ybis,xbis,kind=kind_interp,fill_value=(xbis[0],xbis[-1]),bounds_error=False) #return a function rv=f(ccf) interpolating the BIS for all values of ccf height.
-    
-    if plot_test: #for debuggin purposes
-        ys=np.linspace(0,1,1000)
-        # xs = f(ys)
-        # plt.plot(xs,ys)
-        plt.plot(xbis,ybis,'.')
-        plt.plot(rv,ccf)
-        plt.plot(f(ccf),ccf)
-        plt.show()
-
-    return f
-
-def cifist_coeff_interpolate(amu):
-    '''Interpolate the cifist bisectors as a function of the projected angle
-    '''
-    amv=np.arange(1,0.0,-0.1) #list of angles defined in cfist
-    if amu<=0.1:
-        amv_low=0
-    else:
-        amv_low=np.max(amv[amv<amu]) #angles above and below the proj. angle of the grid
-        idx_low=np.where(amv==amv_low)[0][0] #find indexs of below and above angles
-
-    amv_upp=np.min(amv[amv>=amu])
-    idx_upp=np.where(amv==amv_upp)[0][0]
-
-    cxm=np.zeros([len(amv),7]) #coeff of the bisectors. NxM, N is number of angles, M=7, the degree of the polynomial
-    #PARAMS FROM A CCF COMPUTED WITH HARPS MASK.
-    cxm[0,:]=np.array([-3.51974861,11.1702017,-13.22368296,6.67694456,-0.63201573,-0.44695616,-0.36838495]) #1.0
-    cxm[1,:]=np.array([-4.05903967,13.21901003,-16.47215949,9.51023171,-2.13104764,-0.05153799,-0.36973749]) #0.9
-    cxm[2,:]=np.array([-3.92153131,12.76694663,-15.96958217,9.39599116,-2.34394028,0.12546611,-0.42092905]) #0.8
-    cxm[3,:]=np.array([-3.81892968,12.62209118,-16.06973368,9.71487198,-2.61439945,0.25356088,-0.43310756]) #0.7
-    cxm[4,:]=np.array([-5.37213406,17.6604689,-22.52477323,13.91461247,-4.13186181,0.60271171,-0.46427559]) #0.6
-    cxm[5,:]=np.array([-6.35351933,20.92046705,-26.83933359,16.86220487,-5.28285592,0.90643187,-0.47696283]) #0.5
-    cxm[6,:]=np.array([-7.67270144,25.60866105,-33.4381214,21.58855269,-7.1527039,1.35990694,-0.48001707]) #0.4
-    cxm[7,:]=np.array([-9.24152009,31.09337903,-41.07410957,27.04196984,-9.32910982,1.89291407,-0.455407]) #0.3
-    cxm[8,:]=np.array([-11.62006536,39.30962189,-52.38161244,34.98243089,-12.40650704,2.57940618,-0.37337442]) #0.2
-    cxm[9,:]=np.array([-14.14768805,47.9566719,-64.20294114,43.23156971,-15.57423374,3.13318175,-0.14451226]) #0.1
-
-    #PARAMS FROM A CCF COMPUTED WITH PHOENIX TEMPLATE T=5770
-    # cxm[0,:]=np.array([1.55948401e+01, -5.59100775e+01,  7.98788742e+01, -5.79129621e+01, 2.23124361e+01, -4.37451926e+00,  2.76815127e-02 ]) 
-    # cxm[1,:]=np.array([1.48171843e+01, -5.31901561e+01,  7.60918868e+01, -5.51846846e+01, 2.12359712e+01, -4.15656905e+00,  3.09723630e-02 ])
-    # cxm[2,:]=np.array([1.26415104e+01, -4.56361886e+01,  6.57500389e+01, -4.81159578e+01, 1.87476161e+01, -3.73215320e+00, -2.45358044e-02 ])
-    # cxm[3,:]=np.array([1.10344258e+01, -3.99142119e+01,  5.76936246e+01, -4.24457366e+01, 1.66941114e+01, -3.37376671e+00, -4.49380604e-02 ])
-    # cxm[4,:]=np.array([9.9741693 , -36.19064232,  52.47896315, -38.75624903, 15.32328162,  -3.09800143,  -0.07223029 ])
-    # cxm[5,:]=np.array([9.76117497, -35.11883268,  50.48605512, -36.96972057, 14.50139362,  -2.88347426,  -0.08276774]) #0.5
-    # cxm[6,:]=np.array([10.38959989, -36.94083878,  52.3841557 , -37.73932243,14.50154753,  -2.76975367,  -0.07371497 ]) #0.4
-    # cxm[7,:]=np.array([1.18987101e+01, -4.18327688e+01,  5.84865087e+01, -4.13494763e+01,  1.54611520e+01, -2.78820894e+00, -2.90506536e-02 ]) #0.3
-    # cxm[8,:]=np.array([13.77559813, -48.38724031,  67.48002787, -47.40940284, 17.46750576,  -3.01431973,   0.09248942 ]) #0.2
-    # cxm[9,:]=np.array([16.73411412, -59.08156701,  82.84718709, -58.44626604, 21.52853771,  -3.72660173,   0.37589346 ]) #0.1
-
-    #extrapolate for amu<0.1
-    if amu<=0.1:
-        cxu=cxm[9]+(cxm[8]-cxm[9])*(amu-amv[9])/(amv[8]-amv[9])
-    else: #interpolate 
-        cxu=cxm[idx_low]+(cxm[idx_upp]-cxm[idx_low])*(amu-amv[idx_low])/(amv[idx_upp]-amv[idx_low])
-
-    p=np.poly1d(cxu) #numpy function to generate the RV for any given CCF value
-
-    return p
-
-
-def dumusque_coeffs(amu):
-    coeffs=np.array([-1.51773453,  3.52774949, -3.18794328,  1.22541774,  -0.22479665]) #Polynomial fit to ccf in Fig 2 of Dumusque 2014, plus 400m/s to match Fig6 in Herrero 2016
-    p=np.poly1d(coeffs)
-    return p
-
-
-# @profile
-def compute_ccf_params(self,rv,ccf,plot_test):
-    '''
-    Compute the parameters of the CCF and its bisector span 
-    (10-40% bottom minus 60-90% top)
-    '''
-    rvs=np.zeros(len(ccf)) #initialize
-    fwhm=np.zeros(len(ccf))
-    contrast=np.zeros(len(ccf))
-    BIS=np.zeros(len(ccf))
-
-    for i in range(len(ccf)): #loop for each ccf
-        ccf[i] = ccf[i] - ccf[i].min() + 0.000001
-        #Compute bisector and remove wings
-        cutleft0,cutright0,xbis,ybis=nbspectra.speed_bisector_nb(rv,ccf[i]/ccf[i].max(),integrated_bis=True) #FAST
-        BIS[i]=np.mean(xbis[np.array(ybis>=0.1) & np.array(ybis<=0.4)])-np.mean(xbis[np.array(ybis<=0.9) & np.array(ybis>=0.6)]) #FAST
-        if i==0:
-            cutleft,cutright=cutleft0,cutright0
-        try:
-            popt,_=optimize.curve_fit(nbspectra.gaussian2, rv[cutleft:cutright], ccf[i][cutleft:cutright],p0=[np.max(ccf[i][cutleft:cutright]),rv[cutleft:cutright][np.argmax(ccf[i][cutleft:cutright])]+100,1.5*self.vsini+1000,0.000001]) #fit a gaussian
-        except:
-            popt=[1.0,100000.0,1,100000.0]
-        contrast[i]=popt[0] #amplitude
-        rvs[i]=popt[1] #mean
-        fwhm[i]=2*m.sqrt(2*np.log(2))*np.abs(popt[2]) #fwhm relation to std
-
-        if plot_test: 
-            # plt.plot(rv,1-ccf[i]/ccf[i].max())
-            plt.plot(xbis,1-ybis,'b')
-            plt.show(block=True)
-    
-
-    return rvs, contrast, fwhm, BIS
 
 
 def keplerian_orbit(x,params):
