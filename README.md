@@ -20,7 +20,7 @@ Using **Dynamo** we can easily link between stellar evolution parameters (Temper
 
 1. Clone the repository:
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/IlayMalinyak/Dynamo.git
    cd Dynamo
    ```
 
