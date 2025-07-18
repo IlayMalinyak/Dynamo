@@ -406,10 +406,7 @@ class Star:
                                                               self.vsini)  # returns
         brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp  # if there are no faculae
         if self.facular_area_ratio > 0:
-            brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self, Ngrid_in_ring,
-                                                                         sini, cos_centers, proj_area, photo_flux,
-                                                                         f_filt,
-                                                                         wvp_lc)  # returns spectrum of grid in ring N, its brightness, and the total flux
+            raise NotImplementedError('facular calculation is not yet implemented')
 
         rotator = Rotator(self)
 
@@ -421,17 +418,6 @@ class Star:
                                                                                        flx_ph, vec_grid,
                                                                                        plot_map=self.plot_grid_map)
         self.final_spots_positions = spots_positions
-
-        # noisy_flux, noise_components = noise.add_kepler_noise(
-        #     self.obs_times, FLUX,
-        #     cdpp_ppm=self.cdpp,
-        #     flicker_timescale=self.flicker,
-        #     outlier_rate=self.outliers_rate,
-        #     quaternion_jumps=False,  # Include quaternion adjustment discontinuities
-        #     safe_modes=False  # Include safe mode events
-        # )
-
-        # noisy_flux += self.luminosity    # assuming equal distance, flux of luminos stars is higher
 
         lamost_spectra = self.create_lamost_spectra(wvp_lc, ff_sp)
 

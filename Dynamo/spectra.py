@@ -10,9 +10,6 @@ import sys
 import math as m
 from . import nbspectra
 
-
-
-
 ########################################################################################
 ########################################################################################
 #                                PHOTOMETRY FUNCTIONS                                  #
@@ -363,148 +360,6 @@ def calculate_differential_vsini(self, n_rings, vsini_equator, mu_values):
     return vsini_rings
 
 
-def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
-
-
-    N = self.n_grid_rings #Number of concentric rings
-    flxph = 0.0 #initialze flux of photosphere
-    sflp=np.zeros(N) #brightness of ring
-    flp=np.zeros([N,len(wv)]) #spectra of each ring convolved by filter
-
-    #Computing flux of immaculate photosphere and of every pixel
-    for i in range(0,N): #Loop for each ring, to compute the flux of the star.
-
-        #Interpolate Phoenix intensity models to correct projected ange:
-        if self.use_phoenix_limb_darkening:
-            acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
-            acd_upp=np.min(acd[acd>=amu[i]])
-            idx_low=np.where(acd==acd_low)[0][0]
-            idx_upp=np.where(acd==acd_upp)[0][0]
-            dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-
-        else: #or use a specified limb darkening law
-            dlp = flnp[0]*limb_darkening_law(self,amu[i])
-
-
-        flp[i,:]=dlp*pare[i]/(4*np.pi)*f_filt(wv) #spectra of one grid in ring N multiplied by the filter.
-        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.
-        flxph=flxph+sflp[i]*Ngrid_in_ring[i] #total BRIGHTNESS of the immaculate photosphere
-
-
-    return sflp, flxph
-
-def compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
-    '''Compute thespectra of each grid element adding LD.
-    '''
-    N = self.n_grid_rings #Number of concentric rings
-    flxfc = 0.0 #initialze flux of photosphere
-    sflf=np.zeros(N) #brightness of ring
-    flf=np.zeros([N,len(wv)]) #spectra of each ring convolved by filter
-
-    #Computing flux of immaculate photosphere and of every pixel
-    for i in range(0,N): #Loop for each ring, to compute the flux of the star.   
-
-        #Interpolate Phoenix intensity models to correct projected ange:
-        if self.use_phoenix_limb_darkening:
-            acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
-            acd_upp=np.min(acd[acd>=amu[i]])
-            idx_low=np.where(acd==acd_low)[0][0]
-            idx_upp=np.where(acd==acd_upp)[0][0]
-            dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
-        else: #or use a specified limb darkening law
-            dlp = flnp[0]*limb_darkening_law(self,amu[i])
-
-        flf[i,:]=dlp*pare[i]/(4*np.pi)*f_filt(wv) #spectra of one grid in ring N multiplied by the filter.
-        #Limb brightening
-        dtfmu=250.9-407.4*amu[i]+190.9*amu[i]**2 #(T_fac-T_ph) multiplied by a factor depending on the 
-        sflf[i]=np.sum(flf[i,:])*((self.temperature_photosphere+dtfmu)/(self.temperature_facula))**4 #brightness of onegrid in ring N.  
-        flxfc=flxfc+sflf[i]*Ngrid_in_ring[i]  #total BRIGHTNESS of the immaculate photosphere
-
-    return sflf, flxfc
-
- 
-
-def generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,bph,bsp,bfc,flxph,vec_grid,inversion,plot_map=True):
-    '''Loop for all the pixels and assign the flux corresponding to the grid element.
-    '''
-    simulate_planet=self.simulate_planet
-    N = self.n_grid_rings #Number of concentric rings
-    
-    iteration=0
-
-    #Now loop for each Observed time and for each grid element. Compute if the grid is ph spot or fc and assign the corresponding CCF.
-    # print('Diff rotation law is hard coded. Check ref time for inverse problem. Add more Spot evo laws')
-    if not inversion:
-        sys.stdout.write(" ")
-    flux=np.zeros([len(self.obs_times)]) #initialize total flux at each timestamp
-    filling_sp=np.zeros(len(self.obs_times))
-    filling_ph=np.zeros(len(self.obs_times))
-    filling_pl=np.zeros(len(self.obs_times))
-    filling_fc=np.zeros(len(self.obs_times))
-
-    for k,t in enumerate(self.obs_times):
-        typ=[] #type of grid, ph sp or fc
-        
-        if simulate_planet:
-            planet_pos=compute_planet_pos(self,t)#compute the planet position at current time. In polar coordinates!! 
-        else:
-            planet_pos = [2.0,0.0,0.0]
-
-
-        if self.spot_map.size==0:
-            spot_pos=np.array([np.array([m.pi/2,-m.pi,0.0,0.0])])
-        else:
-            spot_pos=compute_spot_position(self,t) #compute the position of all spots at the current time. Returns theta and phi of each spot.      
-
-        vec_spot=np.zeros([len(self.spot_map),3])
-        xspot = np.cos(self.inclination)*np.sin(spot_pos[:,0])*np.cos(spot_pos[:,1])+np.sin(self.inclination)*np.cos(spot_pos[:,0])
-        yspot = np.sin(spot_pos[:,0])*np.sin(spot_pos[:,1])
-        zspot = np.cos(spot_pos[:,0])*np.cos(self.inclination)-np.sin(self.inclination)*np.sin(spot_pos[:,0])*np.cos(spot_pos[:,1])
-        vec_spot[:,:]=np.array([xspot,yspot,zspot]).T #spot center in cartesian
-
-        #COMPUTE IF ANY SPOT IS VISIBLE
-        vis=np.zeros(len(vec_spot)+1)
-        for i in range(len(vec_spot)):
-            dist=m.acos(np.dot(vec_spot[i],np.array([1,0,0])))
-            
-            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio)) <= (np.pi/2):
-                vis[i]=1.0
-        
-        if (planet_pos[0]-planet_pos[2]<1):
-            vis[-1]=1.0
- 
-
-
-        #Loop for each ring.
-        if (np.sum(vis)==0.0):
-            flux[k],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = flxph, [[1.0,0.0,0.0,0.0]]*np.sum(Ngrid_in_ring), np.dot(Ngrid_in_ring,pare), 0.0, 0.0, 0.0
-        else:
-            flux[k],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = nbspectra.loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,bph,bsp,bfc,flxph,vis)
-
-
-        filling_ph[k]=100*filling_ph[k]/np.dot(Ngrid_in_ring,pare)
-        filling_sp[k]=100*filling_sp[k]/np.dot(Ngrid_in_ring,pare)
-        filling_fc[k]=100*filling_fc[k]/np.dot(Ngrid_in_ring,pare)
-        filling_pl[k]=100*filling_pl[k]/np.dot(Ngrid_in_ring,pare)
-        
-        if not inversion:
-            sys.stdout.write("\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. [{5}/{6}]%".format(t,filling_ph[k],filling_sp[k],filling_fc[k],filling_pl[k],k+1,len(self.obs_times)))
-
-        if plot_map:
-            plot_spot_map_grid(self,vec_grid,typ,self.inclination,t)
-
-
-    return self.obs_times, flux/flxph, filling_ph, filling_sp, filling_fc, filling_pl
-
-
-
-
-
-
-
-
-
 ########################################################################################
 ########################################################################################
 #                              SPECTROSCOPY FUNCTIONS                                  #
@@ -662,11 +517,6 @@ def Ttrans_2_Tperi(T0, P, e, w):
     Tp = T0 - P/(2*np.pi) * (E - e*np.sin(E))      # time of periastron
 
     return Tp
-
-
-
-
-
 
 
 ########################################################################################

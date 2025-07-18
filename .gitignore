@@ -3,3 +3,5 @@ examples/images
 tests/images
 Dynamo/__pycache__/
 images
+dataset/*/*.pqt
+dataset/*/*.json

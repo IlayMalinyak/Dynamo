@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from . import spectra
+from . import nbspectra
 from mpl_toolkits.mplot3d import Axes3D
-
 
 def plot_spot_map(self, best_maps, tref=None):
     N_div = 100
@@ -262,12 +263,6 @@ if __name__ == "__main__":
             sample_data[t, i, 0] = lats[i]  # latitude
             sample_data[t, i, 1] = lons[i]  # longitude
             sample_data[t, i, 2] = radii[i]  # radius
-
-    # Plot static view of time step 0
-    # plot_objects_on_sphere(sample_data, time_step=0)
-
-    # Create and display animation
-    # plot_objects_on_sphere(sample_data, show_animation=True)
 
     # Save animation as GIF
     plot_objects_on_sphere(sample_data, show_animation=True, save_animation='sphere_objects.gif')
