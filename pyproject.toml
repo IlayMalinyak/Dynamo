@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "my_project"
+name = "Dynamo"
 version = "0.1.0"
 description = "realistic stellar photometry and spectroscopy"
 authors = [{ name = "Ilay Kamai", email = "ilay.kamai@campus.technion.ac.il" }]

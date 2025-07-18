@@ -9,7 +9,7 @@
 ## Features
 
 - **Stellar Surface Simulation**: Models the emergence and evolution of star spots and active regions using configurable activity cycles, latitude distributions, and spot evolution laws. This part is based on the [Butterpy](https://github.com/zclaytor/butterpy) package.
-- **Grid-based lightcurve and spectra**: Generates synthetic spectra and light curves, including the effects of limb darkening, rotational broadening and spot evolution. This is based on [Starsim](https://github.com/dbarochlopez/starsim) package.
+- **Grid-based lightcurve and spectra**: Generates synthetic spectra and light curves, including the effects of limb darkening, rotational broadening and spot evolution. This is done in a grid approach and motivated by the [Starsim](https://github.com/dbarochlopez/starsim) package.
 - **Stellar Evolution Parameters**: Interpolates stellar parameters (e.g., mass, radius, temperature, luminosity) from evolutionary models. To get stellar evolution parameters we use [kiauhoku](https://github.com/zclaytor/kiauhoku) package. 
 
 Using **Dynamo** we can easily link between stellar evolution parameters (Temperature, mass, logg, etc.) and magnetic-driven spots. Such connection enable the creation of simulated light curve and spectra of the same star, which can serve as a simulated dataset for multi-modal machine learning models for example.
