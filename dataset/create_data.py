@@ -124,9 +124,9 @@ def generate_simdata(root, Nlc, logger, sim_name='dataset'):
         np.random.shuffle(prot)
     # generate clean samples
     cdpp = 0
-    # outlier_rate = np.random.uniform(0, 0.003, size=Nlc)
+    # outlier_rate = np.random.uniform(0, 0.003, size=Nlc) # example of outlier rate
     outlier_rate = 0
-    # flicker = np.random.uniform(0, 0.3, size=Nlc)
+    # flicker = np.random.uniform(0, 0.3, size=Nlc) # example of flicker
     flicker = 0
     np.random.shuffle(diffrot_shear)
     omega = 2 * np.pi / prot  # rad / day
