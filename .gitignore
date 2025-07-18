@@ -1,7 +1,5 @@
-./*.png
 examples/images
-tests/images
+dataset/images
 Dynamo/__pycache__/
-images
 dataset/*/*.pqt
 dataset/*/*.json

@@ -2,7 +2,9 @@
 
 ## Towards realistic stellar obserables
 
-**Dynamo** is a Python package for simulating stellar light curves and spectra, combining detailed models of stellar evolution, surface activity, planetary transits, and noise. It is based on different exisiting open-source projects that were modified and combined to create stronger link between stellar evolution and stellar observables.
+![Example](images/6.png)
+
+**Dynamo** is a Python package for simulating stellar light curves and spectra, combining detailed models of stellar evolution, surface activity, planetary transits, and noise. It is based on several exisiting open-source projects that were modified and combined to create stronger link between stellar evolution and stellar observables.
 
 ## Features
 
