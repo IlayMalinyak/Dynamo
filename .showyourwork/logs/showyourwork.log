@@ -1,0 +1,24 @@
+Directory already exists: Dynamo.
+Traceback (most recent call last):
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\Scripts\showyourwork.exe\__main__.py", line 7, in <module>
+    sys.exit(entry_point())
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\click\core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\click\core.py", line 1082, in main
+    rv = self.invoke(ctx)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\click\core.py", line 1697, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\click\core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\click\core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\showyourwork\cli\main.py", line 305, in setup
+    commands.setup(slug, cache, overleaf, ssh, action_spec)
+  File "C:\Users\Ilay\anaconda3\envs\kepler2\lib\site-packages\showyourwork\cli\commands\setup.py", line 47, in setup
+    raise exceptions.ShowyourworkException(
+showyourwork.exceptions.base.ShowyourworkException
+

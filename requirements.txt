@@ -3,7 +3,7 @@ emcee==3.0rc2
 kiauhoku==2.0.0
 matplotlib==3.10.1
 numba==0.60.0
-numpy==2.2.3
+numpy==2.0.2
 pandas==2.2.3
 scipy==1.15.2
 seaborn==0.13.2

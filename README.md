@@ -87,7 +87,7 @@ this would create 1000 simulations of 1000 days each. The arguments are:
 Simulation parameters are controlled via the `starsim.conf` file, which includes sections for:
 
 - Stellar properties (mass, radius, temperature, rotation, etc.)
-- Spot and faculae properties
+- Spot and faculae properties (faculea are currently not supported)
 - Limb darkening
 - Planetary parameters
 - Noise characteristics

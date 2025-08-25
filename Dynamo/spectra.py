@@ -1,3 +1,4 @@
+import os
 import sys
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -9,6 +10,8 @@ from scipy import interpolate
 import sys
 import math as m
 from . import nbspectra
+from scipy.interpolate import interp1d
+from scipy.interpolate import UnivariateSpline
 
 ########################################################################################
 ########################################################################################
@@ -367,109 +370,345 @@ def calculate_differential_vsini(self, n_rings, vsini_equator, mu_values):
 ########################################################################################
 
 
-def interpolate_Phoenix(self,temp,grav,plot=False):
-    """Cut and interpolate phoenix models at the desired wavelengths, temperatures, logg and metalicity(not yet). For spectroscopy.
-    Inputs
-    temp: temperature of the model; 
-    grav: logg of the model
-    Returns
-    creates a temporal file with the interpolated spectra at the temp and grav desired, for each surface element.
+def interpolate_Phoenix(star, temp, grav, wv_array=None, interp_type='linear', plot=False):
     """
-    #Demanar tambe la resolucio i ficarho aqui.
+    Fixed version of PHOENIX interpolation with proper custom wavelength support.
 
+    Inputs:
+    -------
+    star : object
+        Star object with path and wavelength limits
+    temp : float
+        Temperature of the model (K)
+    grav : float
+        Log surface gravity of the model
+    wv_array : array, optional
+        Custom wavelength array (e.g., LAMOST grid)
+    plot : bool
+        Whether to create diagnostic plots
+
+    Returns:
+    --------
+    interpolated_spectra : array
+        Array with [wavelength, normalized_flux]
+    """
     import warnings
     warnings.filterwarnings("ignore")
 
-    path = self.path / 'models' / 'Phoenix' #path relatve to working directory 
+    path = star.path / 'models' / 'Phoenix'
     files = [x.name for x in path.glob('lte*fits') if x.is_file()]
-    list_temp=np.unique([float(t[3:8]) for t in files])
-    list_grav=np.unique([float(t[9:13]) for t in files])
 
-    #check if the parameters are inside the grid of models
-    if grav<np.min(list_grav) or grav>np.max(list_grav):
-        sys.exit('Error in the interpolation of Phoenix models. The desired logg ({}) is outside the grid of models, extrapolation is not supported. Please download the \
-        Phoenix models covering the desired logg from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'.format(grav))
+    if not files:
+        print(os.listdir(str(path)))
+        sys.exit(f'Error: No PHOENIX files found in {path}')
 
-    if temp<np.min(list_temp) or temp>np.max(list_temp):
-        sys.exit('Error in the interpolation of Phoenix models. The desired T ({}) is outside the grid of models, extrapolation is not supported. Please download the \
-        Phoenix models covering the desired T from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'.format(temp))
-        
+    # Extract available parameters
+    list_temp = np.unique([float(t[3:8]) for t in files])
+    list_grav = np.unique([float(t[9:13]) for t in files])
 
+    # Check parameter bounds
+    if grav < np.min(list_grav) or grav > np.max(list_grav):
+        sys.exit(f'Error: Desired log g ({grav}) is outside the grid range '
+                 f'[{np.min(list_grav):.2f}, {np.max(list_grav):.2f}]. '
+                 f'Please download additional PHOENIX models.')
 
-    lowT=list_temp[list_temp<=temp].max() #find the model with the temperature immediately below the desired temperature
-    uppT=list_temp[list_temp>=temp].min() #find the model with the temperature immediately above the desired temperature
-    lowg=list_grav[list_grav<=grav].max() #find the model with the logg immediately below the desired logg
-    uppg=list_grav[list_grav>=grav].min() #find the model with the logg immediately above the desired logg
+    if temp < np.min(list_temp) or temp > np.max(list_temp):
+        sys.exit(f'Error: Desired temperature ({temp}) is outside the grid range '
+                 f'[{np.min(list_temp):.0f}, {np.max(list_temp):.0f}]. '
+                 f'Please download additional PHOENIX models.')
 
-    #load the Phoenix wavelengths.
-    if not (path / 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits').exists():
-        sys.exit('Error in reading the file WAVE_PHOENIX-ACES-AGSS-COND-2011.fits. Please download it from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/')
-    with fits.open(path / 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits') as hdul:
-        wavelength=hdul[0].data
-    #cut the wavelength at the ranges set by the user. Adding an overhead of 0.1 nm to allow for high Doppler shifts without losing info
-    overhead=1.0 #Angstrom
-    idx_wv=np.array(wavelength>self.wavelength_lower_limit-overhead) & np.array(wavelength<self.wavelength_upper_limit+overhead)
-    #load the flux of the four phoenix model
-    name_lowTlowg='lte{:05d}-{:.2f}-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'.format(int(lowT),lowg)
-    name_lowTuppg='lte{:05d}-{:.2f}-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'.format(int(lowT),uppg)
-    name_uppTlowg='lte{:05d}-{:.2f}-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'.format(int(uppT),lowg)
-    name_uppTuppg='lte{:05d}-{:.2f}-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'.format(int(uppT),uppg)
+    # Find bounding grid points
+    lowT = list_temp[list_temp <= temp].max()
+    uppT = list_temp[list_temp >= temp].min()
+    lowg = list_grav[list_grav <= grav].max()
+    uppg = list_grav[list_grav >= grav].min()
 
-    #Check if the files exist in the folder
-    if name_lowTlowg not in files:
-        sys.exit('The file '+name_lowTlowg+' required for the interpolation does not exist. Please download it from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/ and add it to your path')
-    if name_lowTuppg not in files:
-        sys.exit('The file '+name_lowTuppg+' required for the interpolation does not exist. Please download it from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/ and add it to your path')
-    if name_uppTlowg not in files:
-        sys.exit('The file '+name_uppTlowg+' required for the interpolation does not exist. Please download it from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/ and add it to your path')
-    if name_uppTuppg not in files:
-        sys.exit('The file '+name_uppTuppg+' required for the interpolation does not exist. Please download it from http://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/ and add it to your path')
+    # Load PHOENIX wavelength array (always needed for reading PHOENIX files)
+    wave_file = path / 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits'
+    if not wave_file.exists():
+        sys.exit(f'Error: Wavelength file not found: {wave_file}')
 
-    #read flux files and cut at the desired wavelengths
-    with fits.open(path / name_lowTlowg) as hdul:
-        flux_lowTlowg=hdul[0].data[idx_wv]
-    with fits.open(path / name_lowTuppg) as hdul:
-        flux_lowTuppg=hdul[0].data[idx_wv]
-    with fits.open(path / name_uppTlowg) as hdul:
-        flux_uppTlowg=hdul[0].data[idx_wv]
-    with fits.open(path / name_uppTuppg) as hdul:
-        flux_uppTuppg=hdul[0].data[idx_wv]
+    with fits.open(wave_file) as hdul:
+        phoenix_wavelength = hdul[0].data
 
-    #interpolate in temperature for the two gravities
-    if uppT==lowT: #to avoid nans
-        flux_lowg = flux_lowTlowg 
-        flux_uppg = flux_lowTuppg
+    # Determine which wavelength array to use for output
+    if wv_array is not None:
+        target_wavelength = wv_array
+        print(f"Using custom wavelength array with {len(target_wavelength)} points")
+        print(f"Range: {target_wavelength.min():.1f} - {target_wavelength.max():.1f} Å")
     else:
-        flux_lowg = flux_lowTlowg + ( (temp - lowT) / (uppT - lowT) ) * (flux_uppTlowg - flux_lowTlowg)
-        flux_uppg = flux_lowTuppg + ( (temp - lowT) / (uppT - lowT) ) * (flux_uppTuppg - flux_lowTuppg)
-    #interpolate in log g
-    if uppg==lowg: #to avoid dividing by 0
-        flux = flux_lowg
+        target_wavelength = phoenix_wavelength
+
+    # Create wavelength mask for PHOENIX data based on target range + overhead
+    overhead = 1.0  # Angstrom
+    target_min = target_wavelength.min()
+    target_max = target_wavelength.max()
+
+    # Expand range slightly for interpolation
+    phoenix_min = max(phoenix_wavelength.min(), target_min - overhead)
+    phoenix_max = min(phoenix_wavelength.max(), target_max + overhead)
+
+    idx_wv_phoenix = ((phoenix_wavelength >= phoenix_min) &
+                      (phoenix_wavelength <= phoenix_max))
+
+    print(f"PHOENIX wavelength subset: {np.sum(idx_wv_phoenix)} points "
+          f"({phoenix_min:.1f} - {phoenix_max:.1f} Å)")
+
+    # Generate filenames for the four corner points
+    def make_filename(T, g):
+        return f'lte{int(T):05d}-{g:.2f}-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
+
+    name_lowTlowg = make_filename(lowT, lowg)
+    name_lowTuppg = make_filename(lowT, uppg)
+    name_uppTlowg = make_filename(uppT, lowg)
+    name_uppTuppg = make_filename(uppT, uppg)
+
+    # Check file existence
+    required_files = [name_lowTlowg, name_lowTuppg, name_uppTlowg, name_uppTuppg]
+    missing_files = [f for f in required_files if f not in files]
+
+    if missing_files:
+        sys.exit(f'Error: Required files for interpolation not found: {missing_files}. '
+                 f'Please download them from the PHOENIX database.')
+
+    # Load flux data using the PHOENIX wavelength mask
+    def load_flux(filename):
+        try:
+            with fits.open(path / filename) as hdul:
+                full_flux = hdul[0].data
+                if len(full_flux) != len(phoenix_wavelength):
+                    sys.exit(f'Error: Flux array length ({len(full_flux)}) does not match '
+                             f'wavelength array length ({len(phoenix_wavelength)}) in {filename}')
+                return full_flux[idx_wv_phoenix]
+        except Exception as e:
+            sys.exit(f'Error reading {filename}: {e}')
+
+    flux_lowTlowg = load_flux(name_lowTlowg)  # (T_low, g_low)
+    flux_lowTuppg = load_flux(name_lowTuppg)  # (T_low, g_high)
+    flux_uppTlowg = load_flux(name_uppTlowg)  # (T_high, g_low)
+    flux_uppTuppg = load_flux(name_uppTuppg)  # (T_high, g_high)
+
+    # Get the subset of PHOENIX wavelengths we're working with
+    phoenix_wv_subset = phoenix_wavelength[idx_wv_phoenix]
+
+    # Proper bilinear interpolation
+    flux_interpolated = bilinear_interpolate(
+        temp, grav, lowT, uppT, lowg, uppg,
+        flux_lowTlowg, flux_lowTuppg, flux_uppTlowg, flux_uppTuppg
+    )
+
+    # If using custom wavelength array, interpolate to that grid
+    if wv_array is not None:
+        print("Interpolating to custom wavelength grid...")
+
+        if interp_type == 'linear':
+
+            # Create interpolation function
+            interp_func = interp1d(
+                phoenix_wv_subset,
+                flux_interpolated,
+                kind='linear',
+                bounds_error=False,
+                fill_value=np.nan
+            )
+
+            # Interpolate to target wavelengths
+            flux_final = interp_func(target_wavelength)
+        elif interp_type == 'spline':
+            spline = UnivariateSpline(phoenix_wv_subset, flux_interpolated, s=0, k=3)
+            flux_final = spline(target_wavelength)
+        else:
+            raise ValueError(f'Interpolation type {interp_type} not supported')
+
+        # Check for NaN values (wavelengths outside PHOENIX range)
+        nan_mask = np.isnan(flux_final)
+        if np.any(nan_mask):
+            print(f"Warning: {np.sum(nan_mask)} wavelength points are outside PHOENIX range")
+            print(f"  Setting to median flux value")
+            flux_final[nan_mask] = np.nanmedian(flux_final)
+
+        final_wavelength = target_wavelength
+        final_flux = flux_final
     else:
-        flux = flux_lowg + ( (grav - lowg) / (uppg - lowg) ) * (flux_uppg - flux_lowg)
+        final_wavelength = phoenix_wv_subset
+        final_flux = flux_interpolated
 
+    # Robust normalization
+    flux_norm = normalize_spectrum_robust(final_wavelength, final_flux, plot=plot)
 
-    #Normalize by fitting a 6th degree polynomial to the maximum of the bins of the binned spectra
-    #nbins depend on the Temperature and wavelength range. 20 bins seems to work for all reasonable parameters. With more bins it starts to pick absorption lines. Less bins degrades the fit. 
-    bins=np.linspace(self.wavelength_lower_limit-overhead,self.wavelength_upper_limit+overhead,20)
-    wv= wavelength[idx_wv]
-    x_bin,y_bin=nbspectra.normalize_spectra_nb(bins,np.asarray(wv,dtype=np.float64),np.asarray(flux,dtype=np.float64))
+    # clip negative values
+    # flux_norm = np.maximum(flux_norm, 1e-10)
+    print("negative values after clipping: ", (flux_norm < 0).sum())
 
-
-    # #divide by 6th deg polynomial
-    coeff = np.polyfit(x_bin, y_bin, 6)
-    flux_norm = flux / np.poly1d(coeff)(wv)
-    #plots to check normalization. For debugging purposes.
+    # Create diagnostic plot if requested
     if plot:
-        plt.plot(wv,flux)
-        plt.plot(x_bin,y_bin,'ok')
-        plt.plot(wv,np.poly1d(coeff)(wv))
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 8))
+
+        # Original spectrum
+        ax1.plot(final_wavelength, final_flux, 'b-', label='Interpolated spectrum')
+        ax1.set_ylabel('Flux')
+        ax1.set_title(f'PHOENIX Interpolation: T={temp}K, log g={grav}')
+        if wv_array is not None:
+            ax1.set_title(ax1.get_title() + ' (Custom wavelength grid)')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+
+        # Normalization
+        continuum = final_flux / flux_norm
+        ax2.plot(final_wavelength, final_flux, 'b-', alpha=0.7, label='Original')
+        ax2.plot(final_wavelength, continuum, 'r-', label='Continuum fit')
+        ax2.set_ylabel('Flux')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+
+        # Normalized spectrum
+        ax3.plot(final_wavelength, flux_norm, 'g-', label='Normalized')
+        ax3.axhline(1.0, color='k', linestyle='--', alpha=0.5)
+        ax3.set_xlabel('Wavelength (Å)')
+        ax3.set_ylabel('Normalized Flux')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+
+        plt.tight_layout()
         plt.show()
-        plt.close()
 
-    interpolated_spectra = np.array([wv,flux_norm])
-
+    interpolated_spectra = np.array([final_wavelength, flux_norm])
     return interpolated_spectra
+
+def bilinear_interpolate(temp, grav, temp_low, temp_high, grav_low, grav_high,
+                         flux_00, flux_01, flux_10, flux_11):
+    """
+    Proper bilinear interpolation for PHOENIX spectra.
+
+    Parameters:
+    -----------
+    temp, grav : float
+        Target temperature and gravity
+    temp_low, temp_high : float
+        Bounding temperatures
+    grav_low, grav_high : float
+        Bounding gravities
+    flux_ij : array
+        Flux arrays at corners: flux_00 = (T_low, g_low), etc.
+
+    Returns:
+    --------
+    flux : array
+        Interpolated flux
+    """
+    # Handle edge cases
+    if temp_high == temp_low:
+        if grav_high == grav_low:
+            return flux_00
+        else:
+            # Linear interpolation in gravity only
+            w_g = (grav - grav_low) / (grav_high - grav_low)
+            return (1 - w_g) * flux_00 + w_g * flux_01
+    elif grav_high == grav_low:
+        # Linear interpolation in temperature only
+        w_t = (temp - temp_low) / (temp_high - temp_low)
+        return (1 - w_t) * flux_00 + w_t * flux_10
+    else:
+        # Full bilinear interpolation
+        w_t = (temp - temp_low) / (temp_high - temp_low)
+        w_g = (grav - grav_low) / (grav_high - grav_low)
+
+        return ((1 - w_t) * (1 - w_g) * flux_00 +  # Lower-left
+                (1 - w_t) * w_g * flux_01 +  # Upper-left
+                w_t * (1 - w_g) * flux_10 +  # Lower-right
+                w_t * w_g * flux_11)  # Upper-right
+
+
+def normalize_spectrum_robust(wavelength, flux, n_bins=None, degree=6, plot=False):
+    """
+    Robust spectrum normalization using adaptive binning and polynomial fitting.
+
+    Parameters:
+    -----------
+    wavelength : array
+        Wavelength array
+    flux : array
+        Flux array
+    n_bins : int, optional
+        Number of bins for continuum estimation. If None, automatically determined.
+    degree : int
+        Polynomial degree for continuum fitting
+    plot : bool
+        Whether to create diagnostic plots
+
+    Returns:
+    --------
+    flux_norm : array
+        Normalized flux
+    """
+    if len(wavelength) == 0:
+        return flux
+
+    # Adaptive binning based on wavelength range
+    if n_bins is None:
+        wave_range = wavelength.max() - wavelength.min()
+        n_bins = max(10, min(50, int(wave_range / 100)))  # ~100Å per bin
+
+    # Create bins
+    bins = np.linspace(wavelength.min(), wavelength.max(), n_bins + 1)
+    bin_centers = []
+    bin_maxima = []
+
+    # Find continuum points in each bin
+    for i in range(n_bins):
+        mask = (wavelength >= bins[i]) & (wavelength < bins[i + 1])
+        if np.sum(mask) > 5:  # Need enough points
+            bin_centers.append((bins[i] + bins[i + 1]) / 2)
+            # Use 95th percentile instead of maximum for robustness
+            bin_maxima.append(np.percentile(flux[mask], 95))
+
+    if len(bin_centers) < 3:
+        # Fallback to simple normalization
+        return flux / np.median(flux)
+
+    # Adaptive polynomial degree
+    max_degree = min(degree, len(bin_centers) - 1)
+
+    # Fit polynomial with optional outlier rejection
+    if len(bin_centers) > 2 * max_degree:
+        # Iterative fitting with outlier rejection
+        for iteration in range(3):
+            coeff = np.polyfit(bin_centers, bin_maxima, max_degree)
+            continuum_bins = np.poly1d(coeff)(bin_centers)
+            residuals = np.abs(bin_maxima - continuum_bins)
+
+            # Remove outliers (> 2σ)
+            if iteration < 2:  # Don't remove outliers on final iteration
+                threshold = np.median(residuals) + 2 * np.std(residuals)
+                good = residuals < threshold
+                if np.sum(good) >= max_degree + 1:
+                    bin_centers = np.array(bin_centers)[good].tolist()
+                    bin_maxima = np.array(bin_maxima)[good].tolist()
+
+    # Final polynomial fit
+    coeff = np.polyfit(bin_centers, bin_maxima, max_degree)
+    continuum = np.poly1d(coeff)(wavelength)
+
+    # Ensure continuum is positive and reasonable
+    continuum = np.maximum(continuum, 0.1 * np.median(flux))
+
+    # Normalize
+    flux_norm = flux / continuum
+
+    # Optional diagnostic plot
+    if plot:
+        plt.figure(figsize=(12, 6))
+        plt.plot(wavelength, flux, 'b-', alpha=0.7, label='Original')
+        plt.plot(bin_centers, bin_maxima, 'ro', label='Continuum points')
+        plt.plot(wavelength, continuum, 'r-', label='Continuum fit')
+        plt.xlabel('Wavelength (Å)')
+        plt.ylabel('Flux')
+        plt.legend()
+        plt.title('Spectrum Normalization')
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    return flux_norm
 
 
 def keplerian_orbit(x,params):
