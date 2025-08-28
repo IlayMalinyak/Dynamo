@@ -5,3 +5,4 @@ dataset/*/*.pqt
 dataset/*/*.json
 dataset_new_interp/
 tests/
+images/
