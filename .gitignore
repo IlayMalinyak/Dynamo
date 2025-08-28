@@ -3,3 +3,5 @@ dataset/images
 Dynamo/__pycache__/
 dataset/*/*.pqt
 dataset/*/*.json
+dataset_new_interp/
+tests/

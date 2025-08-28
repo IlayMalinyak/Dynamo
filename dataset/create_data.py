@@ -322,7 +322,7 @@ def simulate_one(models_root,
                     'sampling_rate': freq_rate,
                     'num_points': len(t_sampling),
                     'evolution_law': 'gaussian',
-                    'wavelength_range': [float(wv_array[0]), float(wv_array[-1])],
+                    'wavelength_range': [float(wavelength[0]), float(wavelength[-1])],
                 }
             }
 
@@ -338,7 +338,7 @@ def simulate_one(models_root,
             # axes[0].grid(True)
             axes[0].set_title('Light Curve')
 
-            axes[1].plot(wv_array, spectra)
+            axes[1].plot(wavelength, spectra)
             axes[1].set_xlabel('Wavelength [Å]')
             axes[1].set_ylabel('Flux')
             # axes[1].grid(True)
@@ -357,7 +357,7 @@ def simulate_one(models_root,
             lightcurve.to_parquet(f"{sim_dir}/lc/{idx}.pqt")
 
             # Save LAMOST spectrum
-            lamost_df = pd.DataFrame(np.c_[wv_array, spectra], columns=["wavelength", "flux"])
+            lamost_df = pd.DataFrame(np.c_[wavelength, spectra], columns=["wavelength", "flux"])
             lamost_df.to_parquet(f"{sim_dir}/lamost/{idx}.pqt")
 
             # Save spot map
@@ -400,13 +400,22 @@ def main():
                         help='Create plots every N simulations (default: 100)')
     parser.add_argument('--num_simulations', type=int, default=1000,
                         help='Number of simulations to generate if not already existing (default: 1000)')
-    parser.add_argument('--ndays', type=int, default=1000,
+    parser.add_argument('--ndays', type=int, default=270,
                         help='Number of days to simulate (default: 1000)')
     parser.add_argument('--n_cpu', type=float, default=1,
                         help='Number of CPU cores to use (default: 1)')
 
     # Parse arguments
     args = parser.parse_args()
+
+
+    # Create directories
+    os.makedirs(args.dataset_dir, exist_ok=True)
+    os.makedirs(f"{args.dataset_dir}/lc", exist_ok=True)
+    os.makedirs(f"{args.dataset_dir}/spots", exist_ok=True)
+    os.makedirs(f"{args.dataset_dir}/lamost", exist_ok=True)
+    os.makedirs(f"{args.dataset_dir}/configs", exist_ok=True)
+    os.makedirs('images', exist_ok=True)
 
     # Configure logging
     logging.basicConfig(
@@ -418,14 +427,6 @@ def main():
         ]
     )
     logger = logging.getLogger(__name__)
-
-    # Create directories
-    os.makedirs(args.dataset_dir, exist_ok=True)
-    os.makedirs(f"{args.dataset_dir}/lc", exist_ok=True)
-    os.makedirs(f"{args.dataset_dir}/spots", exist_ok=True)
-    os.makedirs(f"{args.dataset_dir}/lamost", exist_ok=True)
-    os.makedirs(f"{args.dataset_dir}/configs", exist_ok=True)
-    os.makedirs('images', exist_ok=True)
 
     # Check if simulation properties exist
     if os.path.exists(f"{args.dataset_dir}/simulation_properties.csv"):

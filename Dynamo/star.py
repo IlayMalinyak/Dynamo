@@ -243,6 +243,9 @@ class Star:
         print("number of grid rings: ", self.n_grid_rings)
 
     def create_lamost_spectra(self, wv_array, ff_sp):
+        """
+        Create synthetic LAMOST-like spectra with proper disk integration and broadening.
+        """
         mu, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
                                                                    self.temperature_photosphere,
                                                                    self.logg,
@@ -251,109 +254,89 @@ class Star:
                                                                   self.temperature_spot,
                                                                   self.logg,
                                                                   wv_array=wv_array)
-        print("\nphoto flux: ", np.sum(photo_flux), 'wv_array: ', wv_array, 'ff_sp: ', ff_sp)
+
         disk_integrated_photo = np.zeros(len(wv_array))
         disk_integrated_spot = np.zeros(len(wv_array))
 
-        # Assuming mu contains the μ values (cos(θ))
+        # Sort mu in ascending order if needed
+        if len(mu) > 1 and mu[0] > mu[-1]:
+            mu = mu[::-1]
+            photo_flux = photo_flux[::-1, :]
+            spot_flux = spot_flux[::-1, :]
+
+        # Proper disk integration: F = 2π ∫ I(μ) μ dμ
         for i in range(len(mu) - 1):
-            weight = mu[i] * (mu[i] ** 2 - mu[i + 1] ** 2)
-            disk_integrated_photo += photo_flux[i] * weight
-            disk_integrated_spot += spot_flux[i] * weight
-        print("\ndisk_integrated_photo: ", np.sum(disk_integrated_photo))
-        wavelength_step = wv_array[1] - wv_array[0]  # assuming uniform sampling
-        central_wavelength = np.median(wv_array)
-        sigma_pixels = (central_wavelength / (2.355 * 1800)) / wavelength_step
+            delta_mu = mu[i + 1] - mu[i]
+            # Trapezoidal rule
+            weight_i = mu[i] * delta_mu / 2
+            weight_i_plus_1 = mu[i + 1] * delta_mu / 2
 
-        # Apply Gaussian broadening
-        lamost_photo_flux = gaussian_filter1d(disk_integrated_photo, sigma_pixels)
-        lamost_spot_flux = gaussian_filter1d(disk_integrated_spot, sigma_pixels)
-        fill_factor = ff_sp.mean() / 100
-        combined_spectrum = (1 - fill_factor) * lamost_photo_flux + fill_factor * lamost_spot_flux
-        if self.spectra_filter_name != 'None':
-            lamost_sensitivity = spectra.interpolate_filter(self, self.spectra_filter_name)
-        else:
-            lamost_sensitivity = self.create_synthetic_lamost_sensitivity(wv_array)
+            disk_integrated_photo += (photo_flux[i, :] * weight_i +
+                                      photo_flux[i + 1, :] * weight_i_plus_1)
+            disk_integrated_spot += (spot_flux[i, :] * weight_i +
+                                     spot_flux[i + 1, :] * weight_i_plus_1)
 
-        combined_spectrum = combined_spectrum * lamost_sensitivity
-        print("\ncombined_spectrum: ", np.sum(combined_spectrum))
+        # Combine photosphere and spots using fill factor
+        fill_factor = ff_sp.mean() / 100  # Assuming ff_sp is in percentage
+        combined_spectrum = ((1 - fill_factor) * disk_integrated_photo +
+                             fill_factor * disk_integrated_spot)
 
-        # Apply rotational broadening
+        # Apply stellar rotation broadening FIRST
         combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, self.vsini)
 
-        base_snr = self.cdpp * 2  # low resolution spectra is more noisy
-        wavelength_dependent_snr = base_snr * np.sqrt(lamost_sensitivity / np.max(lamost_sensitivity))
+        # Apply instrumental broadening (LAMOST resolution)
+        R_lamost = 1800
+        c = 299792.458  # km/s
+        sigma_instrumental = c / R_lamost  # ~167 km/s
+        combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
 
-        # Generate noise based on wavelength-dependent SNR
+        # Apply instrument sensitivity
+        if self.spectra_filter_name != 'None':
+            lamost_sensitivity = spectra.interpolate_filter(self, self.spectra_filter_name)
+            # CORRECTED: Proper sensitivity application
+            combined_spectrum = combined_spectrum * lamost_sensitivity(wv_array)
+        else:
+            lamost_sensitivity_values = self.create_synthetic_lamost_sensitivity(wv_array)
+            combined_spectrum = combined_spectrum * lamost_sensitivity_values
+
+        base_snr = self.cdpp * 2
+
+        # Simple uniform SNR or wavelength-dependent
+        if hasattr(self, 'spectra_filter_name') and self.spectra_filter_name != 'None':
+            sensitivity_values = lamost_sensitivity(wv_array)
+            wavelength_dependent_snr = base_snr * np.sqrt(sensitivity_values / np.max(sensitivity_values))
+        else:
+            wavelength_dependent_snr = np.full_like(wv_array, base_snr)
+
+        # Add noise
         combined_spectrum_with_noise = np.zeros_like(combined_spectrum)
         for i in range(len(wv_array)):
             if combined_spectrum[i] > 0 and wavelength_dependent_snr[i] > 0:
                 local_noise_level = combined_spectrum[i] / wavelength_dependent_snr[i]
-                # Method 1: Using truncated Gaussian noise (ensures non-negative values)
                 noise = np.random.normal(0, local_noise_level)
-                # Ensure the flux is never negative
-                combined_spectrum_with_noise[i] = max(combined_spectrum[i] + noise, 0)
-
-                # Alternative Method 2 (commented out): Using Poisson noise
-                # mean_counts = combined_spectrum[i] * 1000  # Scale to reasonable photon counts
-                # counts = np.random.poisson(mean_counts)
-                # combined_spectrum_with_noise[i] = counts / 1000  # Scale back
+                combined_spectrum_with_noise[i] = max(combined_spectrum[i] + noise, 1e-10)
             else:
-                combined_spectrum_with_noise[i] = combined_spectrum[i]
+                combined_spectrum_with_noise[i] = max(combined_spectrum[i], 1e-10)
 
-        return combined_spectrum_with_noise
+        return combined_spectrum_with_noise, wvp_lc
 
     def create_synthetic_lamost_sensitivity(self, wv_array):
         """
-        Create a synthetic LAMOST sensitivity function based on published characteristics.
-        This is an approximation - use official data when available.
-
-        Parameters:
-        -----------
-        wavelength_array : numpy.ndarray
-            Wavelength array in Angstroms
-
-        Returns:
-        --------
-        sensitivity : numpy.ndarray
-            Synthetic LAMOST sensitivity function
+        Create a synthetic LAMOST sensitivity curve if no filter is provided.
         """
-        # Key points in the sensitivity curve (wavelength in Å, relative sensitivity)
-        # Based on approximate LAMOST characteristics
-        key_points = [
-            (3700, 0.20),  # Very low sensitivity at blue end
-            (4000, 0.40),
-            (4500, 0.60),
-            (5000, 0.85),
-            (5500, 0.95),
-            (6000, 1.00),  # Peak sensitivity
-            (6500, 0.95),
-            (7000, 0.90),
-            (7500, 0.85),
-            (8000, 0.75),
-            (8500, 0.65),
-            (9000, 0.55),
-            (9200, 0.45),# Reduced sensitivity at red end
-        ]
+        # Simple model: peak around 5500Å, declining toward red/blue
+        central_wl = 5500.0  # Angstroms
+        width = 2000.0  # Angstroms
 
-        # Unpack the key points
-        key_wavelengths, key_sensitivities = zip(*key_points)
+        sensitivity = np.exp(-0.5 * ((wv_array - central_wl) / width) ** 2)
 
-        # Create interpolation function
-        interp_func = interp1d(key_wavelengths, key_sensitivities,
-                               kind='cubic', bounds_error=False, fill_value=0.0)
+        # Add some realistic features
+        # Red cutoff around 9000Å
+        red_cutoff = 1.0 / (1.0 + np.exp((wv_array - 8500) / 200))
+        # Blue cutoff around 3800Å
+        blue_cutoff = 1.0 / (1.0 + np.exp((3800 - wv_array) / 200))
 
-        # Apply to input wavelength array
-        sensitivity = interp_func(wv_array)
-
-        # Add some noise/ripple to simulate filter effects (optional)
-        # Small oscillations with ~50Å period to simulate interference fringing
-        ripple = 0.03 * np.sin(wv_array / 50.0)
-        sensitivity = sensitivity + ripple
-
-        # Ensure values stay in valid range
-        sensitivity = np.clip(sensitivity, 0.0, 1.0)
-
+        sensitivity = sensitivity * red_cutoff * blue_cutoff
         return sensitivity
 
     def compute_forward(self, t=None, wv_array=None):
@@ -390,20 +373,26 @@ class Star:
         # Read filter and interpolate it in order to convolve it with the spectra
         f_filt = spectra.interpolate_filter(self, self.filter_name)
 
-
         brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(self,
-                                                              Ngrid_in_ring,
-                                                              sini, cos_centers, proj_area, photo_flux,
-                                                              f_filt,
-                                                              wvp_lc,
-                                                              self.vsini)  # returns spectrum
+                                                                         Ngrid_in_ring,
+                                                                         sini,  # acd (Phoenix mu angles)
+                                                                         cos_centers,  # amu (grid mu values)
+                                                                         proj_area,  # pare (projected areas)
+                                                                         photo_flux,  # flnp (flux at each angle)
+                                                                         f_filt,
+                                                                         wvp_lc,
+                                                                         self.vsini)
 
 
-        brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(self, Ngrid_in_ring,
-                                                              sini, cos_centers, proj_area, spot_flux,
-                                                              f_filt,
-                                                              wvp_lc,
-                                                              self.vsini)  # returns
+        brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(self,
+                                                                         Ngrid_in_ring,
+                                                                         sini,  # acd (Phoenix mu angles)
+                                                                         cos_centers,  # amu (grid mu values)
+                                                                         proj_area,  # pare (projected areas)
+                                                                         spot_flux,  # flnp (flux at each angle)
+                                                                         f_filt,
+                                                                         wvp_lc,
+                                                                         self.vsini)
         brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp  # if there are no faculae
         if self.facular_area_ratio > 0:
             raise NotImplementedError('facular calculation is not yet implemented')
@@ -419,7 +408,7 @@ class Star:
                                                                                        plot_map=self.plot_grid_map)
         self.final_spots_positions = spots_positions
 
-        lamost_spectra = self.create_lamost_spectra(wvp_lc, ff_sp)
+        lamost_spectra, wvp_lc = self.create_lamost_spectra(wvp_lc, ff_sp)
 
         self.results['time'] = t
         self.results['lc'] = FLUX
