@@ -1,5 +1,6 @@
 examples/images
 dataset/
+dataset/__pycache__/
 Dynamo/__pycache__/
 dataset/*/*.pqt
 dataset/*/*.json
