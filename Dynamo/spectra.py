@@ -10,11 +10,64 @@ from pathlib import Path
 from scipy import interpolate
 import sys
 import warnings
+import numpy as np
+from scipy import signal, interpolate
+import hashlib
+
 
 warnings.filterwarnings("ignore")
 from scipy.interpolate import interp1d, UnivariateSpline
 import math as m
 from . import nbspectra
+
+
+c = 299792.458  # km/s
+
+class PhoenixCacheContext:
+    """
+    Context manager for temporarily changing cache settings.
+
+    Example:
+    --------
+    with PhoenixCacheContext(enabled=False):
+        # Cache disabled for this block
+        result = interpolate_Phoenix_mu_lc_with_metallicity(...)
+    # Cache settings restored
+    """
+
+    def __init__(self, enabled=None, cache_dir=None, max_size_gb=None):
+        self.old_enabled = None
+        self.old_cache_dir = None
+        self.old_max_size = None
+        self.new_enabled = enabled
+        self.new_cache_dir = cache_dir
+        self.new_max_size = max_size_gb
+
+    def __enter__(self):
+        global PHOENIX_CACHE_ENABLED, PHOENIX_CACHE_DIR, PHOENIX_CACHE_MAX_SIZE_GB
+
+        self.old_enabled = PHOENIX_CACHE_ENABLED
+        self.old_cache_dir = PHOENIX_CACHE_DIR
+        self.old_max_size = PHOENIX_CACHE_MAX_SIZE_GB
+
+        if self.new_enabled is not None:
+            PHOENIX_CACHE_ENABLED = self.new_enabled
+        if self.new_cache_dir is not None:
+            PHOENIX_CACHE_DIR = Path(self.new_cache_dir)
+            PHOENIX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        if self.new_max_size is not None:
+            PHOENIX_CACHE_MAX_SIZE_GB = self.new_max_size
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        global PHOENIX_CACHE_ENABLED, PHOENIX_CACHE_DIR, PHOENIX_CACHE_MAX_SIZE_GB
+
+        PHOENIX_CACHE_ENABLED = self.old_enabled
+        PHOENIX_CACHE_DIR = self.old_cache_dir
+        PHOENIX_CACHE_MAX_SIZE_GB = self.old_max_size
+
+
 
 def interpolate_filter(star, filter_name):
 
@@ -25,6 +78,7 @@ def interpolate_filter(star, filter_name):
     try:
         wv, filt = np.loadtxt(path,unpack=True)
     except: #if the filter do not exist, create a tophat filter from the wv range
+        print(f'WARNING: {filter_name} not found in {star.models_root} / models')
         wv=np.array([star.wavelength_lower_limit, star.wavelength_upper_limit])
         filt=np.array([1,1])
 
@@ -56,6 +110,160 @@ def limb_darkening_law(self,amu):
         sys.exit('Error in limb darkening law, please select one of the following: phoenix, linear, quadratic, sqrt, logarithmic')
 
     return mu
+
+
+def _resample_to_log_lambda(wavelength, flux, n=None):
+    """Return (loglam_grid, flux_resampled, interp_back_fn)
+    loglam_grid in units of log10(lambda); interp_back_fn maps resampled flux -> original wavelength grid.
+    """
+    # convert to numpy arrays
+    wavelength = np.asarray(wavelength)
+    flux = np.asarray(flux)
+    # use base-10 logarithm
+    loglam = np.log10(wavelength)
+    # choose number of points
+    if n is None:
+        # choose oversampling ~ 4 samples per original pixel on average
+        n = max( len(wavelength)*4, 1024 )
+    logmin, logmax = loglam.min(), loglam.max()
+    log_grid = np.linspace(logmin, logmax, int(n))
+    interp = interpolate.interp1d(loglam, flux, kind='linear', bounds_error=False, fill_value="extrapolate")
+    flux_resampled = interp(log_grid)
+    # function to map back to original wavelength grid
+    def interp_back(fl_resamp):
+        f_interp_back = interpolate.interp1d(log_grid, fl_resamp, kind='linear', bounds_error=False, fill_value="extrapolate")
+        return f_interp_back(np.log10(wavelength))
+    return log_grid, flux_resampled, interp_back
+
+def apply_rotational_broadening_differential(wavelength, flux,
+                                             vsini_equator,
+                                             alpha=0.0,
+                                             inclination_deg=90.0,
+                                             epsilon=0.6,
+                                             limb_darkening_fn=None,
+                                             n_theta=60, n_phi=120,
+                                             log_n_samples=None):
+    """
+    Apply rotational broadening including differential rotation.
+
+    Parameters
+    ----------
+    wavelength : 1D array (Angstrom)
+    flux : 1D array
+    vsini_equator : float
+        Observed projected equatorial velocity (km/s): R * Omega_eq * sin i
+    alpha : float
+        Differential rotation parameter (Reiners-style). Omega(lat) = Omega_eq * (1 - alpha * sin^2(lat)).
+        alpha = 0 => solid-body; alpha > 0 => equator rotates faster than poles (solar-like).
+    inclination_deg : float
+        Stellar inclination, degrees (i=90 -> equator-on).
+    epsilon : float
+        Linear limb-darkening coefficient (used if limb_darkening_fn is None).
+    limb_darkening_fn : callable(mu) -> I(norm) (optional)
+        If provided, used to evaluate local intensity vs mu (mu = cos gamma). Should return normalized I( mu ).
+    n_theta, n_phi : int
+        Sampling resolution for the stellar surface (latitude, longitude).
+    log_n_samples : int or None
+        Number of samples for the log-lambda resampling. If None the function chooses automatically.
+
+    Returns
+    -------
+    broadened_flux_on_original_grid : 1D array (same shape as flux)
+    """
+    c_kms = 299792.458
+
+    # --- 1) resample spectrum to uniform log10(lambda) grid (velocity domain) ---
+    log_grid, flux_log, interp_back = _resample_to_log_lambda(wavelength, flux, n=log_n_samples)
+    # velocity grid in km/s corresponding to log10(lambda) spacing:
+    # v = c * ln(lambda/lambda0) = c * ln(10) * (log10(lambda) - log10(lambda0))
+    # We'll measure velocities relative to line center at lambda0 = median wavelength.
+    lam0 = np.median(wavelength)
+    loglam0 = np.log10(lam0)
+    dv = c_kms * np.log(10) * (log_grid[1] - log_grid[0])  # km/s per pixel
+    v_grid = c_kms * np.log(10) * (log_grid - loglam0)     # velocity grid centered at lam0
+
+    # --- 2) Build projected-velocity kernel via surface integration ---
+    # Grid in colatitude theta (0=pole, pi/2=equator) and longitude phi (0 central meridian)
+    theta = np.linspace(0.0, np.pi, n_theta)   # colatitude
+    phi = np.linspace(-np.pi, np.pi, n_phi, endpoint=False)
+
+    # 2D mesh
+    th2d, ph2d = np.meshgrid(theta, phi, indexing='xy')  # shapes (n_phi, n_theta)
+
+    # compute surface element area weighting factor: sin(theta) dtheta dphi (we'll incorporate dtheta,dphi as factors later)
+    sin_th = np.sin(th2d)
+
+    # convert to latitude (lambda_lat) in radians: lat = 90° - colatitude
+    lat2d = (np.pi/2.0) - th2d
+    sin_lat = np.sin(lat2d)
+
+    # inclination
+    inc = np.deg2rad(inclination_deg)
+    sin_i = np.sin(inc)
+    cos_i = np.cos(inc)
+
+    # differential rotation: Omega(theta) = Omega_eq * (1 - alpha * sin^2(lat))
+    # But we don't have Omega_eq explicitly. We use vsini_equator = R * Omega_eq * sin(i)
+    # So local projected velocity at (theta,phi) is:
+    # v_local = R * Omega(theta) * sin(theta) * sin(i) * sin(phi)
+    # => v_local = vsini_equator * (1 - alpha * sin_lat**2) * sin(theta) * sin(phi)
+    # (this gives v_local = vsini_equator * sin(phi) at equator lat=0, theta=pi/2)
+    factor_diff = (1.0 - alpha * (sin_lat**2))  # shape (n_phi, n_theta)
+    v_local = vsini_equator * factor_diff * (np.sin(th2d)) * sin_i * np.sin(ph2d)  # km/s
+
+    # visibility: mu = n . obs_unit where obs_unit = (sin i, 0, cos i)
+    # local normal n = (sinθ cosφ, sinθ sinφ, cosθ)
+    mu = sin_i * np.sin(th2d) * np.cos(ph2d) + cos_i * np.cos(th2d)
+    visible_mask = (mu > 0)
+
+    # limb darkening / intensity weighting
+    if limb_darkening_fn is None:
+        # linear law: I(mu)/I(1) = 1 - epsilon*(1-mu)
+        intens = 1.0 - epsilon * (1.0 - mu)
+        intens = np.clip(intens, 0.0, None)
+    else:
+        intens = limb_darkening_fn(mu)
+        intens = np.asarray(intens)
+        intens = np.where(mu>0, intens, 0.0)
+
+    # element area weights: sin(theta) dtheta dphi, approximate dtheta = pi/(n_theta-1), dphi = 2pi/n_phi
+    dtheta = (theta[1] - theta[0]) if n_theta > 1 else np.pi
+    dphi   = (phi[1] - phi[0]) if n_phi > 1 else 2.0*np.pi
+    area_weight = sin_th * dtheta * dphi
+
+    # weight for each surface cell: only visible parts contribute ∝ I(mu) * mu * area
+    cell_weight = np.where(visible_mask, intens * mu * area_weight, 0.0)
+
+    # Build kernel: histogram v_local values weighted by cell_weight
+    # choose velocity bins matching v_grid
+    v_edges = np.concatenate([v_grid - 0.5*dv, [v_grid[-1] + 0.5*dv]])
+    v_flat = v_local.ravel()
+    w_flat = cell_weight.ravel()
+    kernel_counts, _ = np.histogram(v_flat, bins=v_edges, weights=w_flat)
+
+    # normalize kernel to unit area
+    kernel = kernel_counts.astype(float)
+    kernel_sum = kernel.sum()
+    if kernel_sum <= 0:
+        # fallback to delta (no broadening)
+        kernel = np.zeros_like(kernel)
+        mid = len(kernel)//2
+        kernel[mid] = 1.0
+    else:
+        kernel /= kernel_sum
+
+    # --- 3) Optionally smooth kernel slightly to avoid discretization noise ---
+    # small gaussian smoothing in velocity pixels (not required; uncomment to enable)
+    # kernel = signal.fftconvolve(kernel, signal.windows.gaussian(9, std=2)/np.sum(signal.windows.gaussian(9, std=2)), mode='same')
+
+    # --- 4) Convolve flux on log-lambda grid with kernel ---
+    # convolution in velocity space is simply convolution over the flux_log array
+    broadened_flux_log = signal.fftconvolve(flux_log, kernel, mode='same')
+
+    # --- 5) map back to original wavelength grid and return ---
+    broadened_flux = interp_back(broadened_flux_log)
+    return broadened_flux
+
 
 
 def apply_rotational_broadening(wavelength, flux, vsini, epsilon=0.6):
@@ -194,7 +402,14 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
         # Apply rotational broadening based on the vsini for this ring
         if vsini_rings[i] > 0:
-            dlp = apply_rotational_broadening(wv, dlp, vsini_rings[i])
+            dlp = apply_rotational_broadening_differential(
+                wv, dlp,
+                vsini_equator=vsini_rings[i],  # your model’s vsini
+                alpha=star.differential_rotation,
+                inclination_deg=star.inclination,
+                epsilon=star.limb_darkening_q1  # or use your full limb-darkening function
+            )
+            # dlp = apply_rotational_broadening(wv, dlp, vsini_rings[i])
 
         # Apply filter and calculate flux contribution
         flp[i, :] = dlp * proj_area[i] / (4 * np.pi) * f_filt(wv)
@@ -202,6 +417,216 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
         flxph = flxph + sflp[i] * Ngrid_in_ring[i]
 
     return sflp, flxph
+
+
+def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
+                          spectra_filter_name='LAMOST.dat'):
+    """
+    Create synthetic spectra using pre-computed Phoenix spectra.
+
+    Parameters:
+    -----------
+    star : Star object
+        Contains stellar parameters (vsini, temperature, etc.)
+    wv_array : array
+        Wavelength array
+    photo_flux : 2D array
+        Pre-computed photosphere flux [n_mu, n_wavelength]
+    spot_flux : 2D array
+        Pre-computed spot flux [n_mu, n_wavelength]
+    mu : array
+        Cosine of viewing angles (already computed)
+    ff_sp : array or float
+        Spot filling factor (as percentage)
+    spectra_filter_name : str
+        Name of spectral response filter file
+
+    Returns:
+    --------
+    tuple: (spectrum_with_noise, wavelength_array)
+    """
+    # Perform disk integration if not already done
+    disk_integrated_photo = np.zeros(len(wv_array))
+    disk_integrated_spot = np.zeros(len(wv_array))
+
+    # Sort mu in ascending order if needed
+    if len(mu) > 1 and mu[0] > mu[-1]:
+        mu = mu[::-1]
+        photo_flux = photo_flux[::-1, :]
+        spot_flux = spot_flux[::-1, :]
+
+    # Proper disk integration: F = 2π ∫ I(μ) μ dμ
+    for i in range(len(mu) - 1):
+        delta_mu = mu[i + 1] - mu[i]
+        # Trapezoidal rule
+        weight_i = mu[i] * delta_mu / 2
+        weight_i_plus_1 = mu[i + 1] * delta_mu / 2
+
+        disk_integrated_photo += (photo_flux[i, :] * weight_i +
+                                  photo_flux[i + 1, :] * weight_i_plus_1)
+        disk_integrated_spot += (spot_flux[i, :] * weight_i +
+                                 spot_flux[i + 1, :] * weight_i_plus_1)
+
+    # Combine photosphere and spots using fill factor
+    fill_factor = np.mean(ff_sp) / 100  # Convert percentage to fraction
+    combined_spectrum = ((1 - fill_factor) * disk_integrated_photo +
+                         fill_factor * disk_integrated_spot)
+
+    # Apply stellar rotational broadening
+    if star.vsini > 0:
+        combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, star.vsini)
+
+    # Apply instrumental broadening (LAMOST resolution)
+    R = star.spectra_resolution
+    sigma_instrumental = c / R  # ~167 km/s
+    combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
+
+    # Apply instrument sensitivity/filter
+    if spectra_filter_name != 'None':
+        instrument_sensitivity = interpolate_filter(star, spectra_filter_name)
+        combined_spectrum = combined_spectrum * instrument_sensitivity(wv_array)
+    else:
+        # Create synthetic sensitivity if no filter provided
+        sensitivity_values = create_synthetic_lamost_sensitivity(wv_array)
+        combined_spectrum = combined_spectrum * sensitivity_values
+
+    # Add noise based on SNR
+    # base_snr = star.cdpp * 2 if hasattr(star, 'cdpp') else 0
+
+    # # Wavelength-dependent SNR
+    # if spectra_filter_name != 'None':
+    #     sensitivity_values = instrument_sensitivity(wv_array)
+    #     wavelength_dependent_snr = base_snr * np.sqrt(sensitivity_values / np.max(sensitivity_values))
+    # else:
+    #     wavelength_dependent_snr = np.full_like(wv_array, base_snr)
+
+    # # Add photon noise
+    # combined_spectrum_with_noise = np.zeros_like(combined_spectrum)
+    # for i in range(len(wv_array)):
+    #     if combined_spectrum[i] > 0 and wavelength_dependent_snr[i] > 0:
+    #         local_noise_level = combined_spectrum[i] / wavelength_dependent_snr[i]
+    #         noise = np.random.normal(0, local_noise_level)
+    #         combined_spectrum_with_noise[i] = max(combined_spectrum[i] + noise, 1e-10)
+    #     else:
+    #         combined_spectrum_with_noise[i] = max(combined_spectrum[i], 1e-10)
+
+    return combined_spectrum, wv_array
+
+
+def create_synthetic_lamost_sensitivity(wv_array):
+    """
+    Create a synthetic LAMOST sensitivity curve if no filter is provided.
+
+    Parameters:
+    -----------
+    wv_array : array
+        Wavelength array in Angstroms
+
+    Returns:
+    --------
+    array : Sensitivity values
+    """
+    # Simple model: peak around 5500Å, declining toward red/blue
+    central_wl = 5500.0  # Angstroms
+    width = 2000.0  # Angstroms
+
+    sensitivity = np.exp(-0.5 * ((wv_array - central_wl) / width) ** 2)
+
+    # Add realistic cutoffs
+    # Red cutoff around 9000Å
+    red_cutoff = 1.0 / (1.0 + np.exp((wv_array - 8500) / 200))
+    # Blue cutoff around 3800Å
+    blue_cutoff = 1.0 / (1.0 + np.exp((3800 - wv_array) / 200))
+
+    sensitivity = sensitivity * red_cutoff * blue_cutoff
+    return sensitivity
+
+
+def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area,
+                               flnp, f_filt, wv, vsini=0.0):
+    """
+    Compute immaculate spectra without filter convolution for spectroscopic use.
+    Similar to compute_immaculate_lc_with_vsini but returns full spectra.
+
+    Parameters:
+    -----------
+    star : Star object
+    Ngrid_in_ring : array
+        Number of grid points in each ring
+    sini : array
+        Phoenix mu angles
+    cos_centers : array
+        Grid mu values
+    proj_area : array
+        Projected areas
+    flnp : 2D array
+        Phoenix flux at each angle
+    f_filt : function
+        Filter function (can be identity for spectra)
+    wv : array
+        Wavelength array
+    vsini : float
+        Projected rotational velocity
+
+    Returns:
+    --------
+    tuple: (ring_spectra, total_spectrum)
+        ring_spectra: 2D array [n_rings, n_wavelengths]
+        total_spectrum: 1D array of disk-integrated spectrum
+    """
+    N = star.n_grid_rings
+    ring_spectra = np.zeros([N, len(wv)])
+    total_spectrum = np.zeros(len(wv))
+
+    # Calculate differential rotation for each ring if enabled
+    if hasattr(star, 'differential_rotation') and star.differential_rotation:
+        vsini_rings = calculate_differential_vsini(star, N, vsini, cos_centers)
+    else:
+        vsini_rings = [vsini] * N
+
+    for i in range(N):
+        # Interpolate Phoenix intensity models to correct projected angle
+        if star.use_phoenix_limb_darkening:
+            # Handle edge cases properly
+            if cos_centers[i] >= sini.max():
+                dlp = flnp[-1]
+            elif cos_centers[i] <= sini.min():
+                dlp = flnp[0]
+            else:
+                # Normal interpolation
+                acd_below = sini[sini < cos_centers[i]]
+                acd_above = sini[sini >= cos_centers[i]]
+
+                acd_low = np.max(acd_below)
+                acd_upp = np.min(acd_above)
+                idx_low = np.where(sini == acd_low)[0][0]
+                idx_upp = np.where(sini == acd_upp)[0][0]
+
+                # Linear interpolation
+                dlp = flnp[idx_low] + (flnp[idx_upp] - flnp[idx_low]) * \
+                      (cos_centers[i] - acd_low) / (acd_upp - acd_low)
+        else:
+            # Use specified limb darkening law
+            dlp = flnp[0] * limb_darkening_law(star, cos_centers[i])
+
+        # Apply rotational broadening if needed
+        if vsini_rings[i] > 0:
+            if star.differential_rotation > 0:
+                dlp = apply_rotational_broadening_differential(
+                    wv, dlp,
+                    vsini_equator=vsini_rings[i],
+                    alpha=star.differential_rotation,
+                    inclination_deg=np.rad2deg(star.inclination),
+                    epsilon=star.limb_darkening_q1
+                )
+            else:
+                dlp = apply_rotational_broadening(wv, dlp, vsini_rings[i])
+
+        # Store spectrum for this ring (no filter for spectroscopy)
+        ring_spectra[i, :] = dlp * proj_area[i] / (4 * np.pi)
+        total_spectrum += ring_spectra[i, :] * Ngrid_in_ring[i]
+
+    return ring_spectra, total_spectrum
 
 
 def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='linear',
@@ -258,16 +683,27 @@ def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='line
         list_temp = star._phoenix_mu_cache['temperatures']
         list_grav = star._phoenix_mu_cache['gravities']
 
-    # Validate parameter bounds
-    if grav < np.min(list_grav) or grav > np.max(list_grav):
-        sys.exit(f'Error: Desired log g ({grav}) is outside the grid range '
-                 f'[{np.min(list_grav):.2f}, {np.max(list_grav):.2f}]. '
-                 f'Please download additional PHOENIX SpecInt models.')
+    # Validate and clamp parameter bounds with warnings
+    original_grav = grav
+    original_temp = temp
 
-    if temp < np.min(list_temp) or temp > np.max(list_temp):
-        sys.exit(f'Error: Desired temperature ({temp}) is outside the grid range '
-                 f'[{np.min(list_temp):.0f}, {np.max(list_temp):.0f}]. '
-                 f'Please download additional PHOENIX SpecInt models.')
+    if grav < np.min(list_grav):
+        grav = np.min(list_grav)
+        print(f'Warning: Desired log g ({original_grav}) is below grid minimum. '
+              f'Using minimum value: {grav:.2f}')
+    elif grav > np.max(list_grav):
+        grav = np.max(list_grav)
+        print(f'Warning: Desired log g ({original_grav}) is above grid maximum. '
+              f'Using maximum value: {grav:.2f}')
+
+    if temp < np.min(list_temp):
+        temp = np.min(list_temp)
+        print(f'Warning: Desired temperature ({original_temp}) is below grid minimum. '
+              f'Using minimum value: {temp:.0f} K')
+    elif temp > np.max(list_temp):
+        temp = np.max(list_temp)
+        print(f'Warning: Desired temperature ({original_temp}) is above grid maximum. '
+              f'Using maximum value: {temp:.0f} K')
 
     # Find bounding grid points
     lowT = list_temp[list_temp <= temp].max() if any(list_temp <= temp) else list_temp.min()
@@ -304,34 +740,7 @@ def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='line
 
 
     # Load wavelength grid and mu angles from first available file
-    def get_wavelength_and_mu(fits_file):
-        """Extract wavelength grid and mu angles from SpecInt FITS file"""
-        with fits.open(fits_file) as hdul:
-            header = hdul[0].header
 
-            # Extract WCS parameters for wavelength
-            crval1 = header['CRVAL1']  # Wavelength of reference pixel
-            cdelt1 = header['CDELT1']  # Wavelength step size
-            crpix1 = header['CRPIX1']  # Reference pixel (usually 1)
-            ctype1 = header['CTYPE1']  # Grid type
-            naxis1 = header['NAXIS1']  # Number of wavelength points
-
-            # Create wavelength array
-            if 'LOG' in ctype1:
-                # Logarithmic grid
-                log_wave = crval1 + cdelt1 * (np.arange(naxis1) + 1 - crpix1)
-                wavelength = 10 ** log_wave
-            else:
-                # Linear grid
-                wavelength = crval1 + cdelt1 * (np.arange(naxis1) + 1 - crpix1)
-
-            # Check vacuum vs air wavelengths
-            is_vacuum = ctype1.startswith('WAVE')
-
-            # Get mu angles from second extension
-            mu_angles = hdul[1].data
-
-            return wavelength, mu_angles, is_vacuum, ctype1
 
     # Get wavelength grid from first file
     first_file = path / model_files['lowTlowg']
@@ -451,6 +860,7 @@ def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='line
     return amu, final_wavelength, final_flux
 
 
+
 def bilinear_interpolate_point(temp, grav, temp_low, temp_high, grav_low, grav_high,
                                flux_00, flux_01, flux_10, flux_11):
     """
@@ -491,6 +901,730 @@ def bilinear_interpolate_point(temp, grav, temp_low, temp_high, grav_low, grav_h
                 w_t * (1 - w_g) * flux_10 +  # Lower-right
                 w_t * w_g * flux_11)  # Upper-right
 
+
+def interpolate_Phoenix_mu_lc_with_metallicity(star, temp, grav, feh, wv_array=None,
+                                               interp_type='linear', convert_to_air=True,
+                                               plot=False):
+    """
+    Accurate cut and interpolate Phoenix SpecInt models at desired wavelengths,
+    temperatures, logg, and metallicity. Uses trilinear interpolation.
+
+    Parameters:
+    -----------
+    star : object
+        Star object with models_root path and wavelength limits
+    temp : float
+        Temperature of the model (K)
+    grav : float
+        Log surface gravity of the model
+    feh : float
+        Metallicity [Fe/H] of the model
+    wv_array : array, optional
+        Custom wavelength array to interpolate to
+    interp_type : str
+        Interpolation method ('linear' or 'spline')
+    convert_to_air : bool
+        Whether to convert vacuum wavelengths to air wavelengths
+    plot : bool
+        Whether to create diagnostic plots
+
+    Returns:
+    --------
+    tuple: (mu_angles, wavelength_array, interpolated_flux_at_each_angle)
+    """
+
+    if isinstance(star.models_root, str):
+        star.models_root = Path(star.models_root)
+    path = star.models_root / 'models' / 'Phoenix_mu'
+
+    # Parse available files and extract unique parameter values
+    if not hasattr(star, '_phoenix_mu_cache_with_feh'):
+        files = [x.name for x in path.glob('lte*SPECINT*fits') if x.is_file()]
+        if not files:
+            sys.exit(f'Error: No PHOENIX SpecInt files found in {path}')
+
+        list_temp = []
+        list_grav = []
+        list_feh = []
+
+        for filename in files:
+            # Parse temperature (characters 3-8)
+            temp_val = float(filename[3:8])
+
+            # Parse gravity (characters 9-13)
+            grav_val = float(filename[9:13])
+
+            # Parse metallicity (everything between grav and .PHOENIX)
+            feh_part = filename[13:filename.index('.PHOENIX')]
+            feh_val = float(feh_part)
+
+            list_temp.append(temp_val)
+            list_grav.append(grav_val)
+            list_feh.append(feh_val)
+
+        list_temp = np.unique(list_temp)
+        list_grav = np.unique(list_grav)
+        list_feh = np.unique(list_feh)
+
+        star._phoenix_mu_cache_with_feh = {
+            'files': files,
+            'temperatures': list_temp,
+            'gravities': list_grav,
+            'metallicities': list_feh
+        }
+
+        print(f"Available parameter ranges:")
+        print(f"  Temperature: {list_temp.min():.0f} - {list_temp.max():.0f} K")
+        print(f"  log(g): {list_grav.min():.2f} - {list_grav.max():.2f}")
+        print(f"  [Fe/H]: {list_feh.min():.2f} - {list_feh.max():.2f}")
+    else:
+        files = star._phoenix_mu_cache_with_feh['files']
+        list_temp = star._phoenix_mu_cache_with_feh['temperatures']
+        list_grav = star._phoenix_mu_cache_with_feh['gravities']
+        list_feh = star._phoenix_mu_cache_with_feh['metallicities']
+
+    # Validate and clamp parameter bounds
+    original_temp, original_grav, original_feh = temp, grav, feh
+
+    if temp < np.min(list_temp):
+        temp = np.min(list_temp)
+        print(f'Warning: Temperature {original_temp}K below grid minimum. Using {temp:.0f}K')
+    elif temp > np.max(list_temp):
+        temp = np.max(list_temp)
+        print(f'Warning: Temperature {original_temp}K above grid maximum. Using {temp:.0f}K')
+
+    if grav < np.min(list_grav):
+        grav = np.min(list_grav)
+        print(f'Warning: log(g) {original_grav} below grid minimum. Using {grav:.2f}')
+    elif grav > np.max(list_grav):
+        grav = np.max(list_grav)
+        print(f'Warning: log(g) {original_grav} above grid maximum. Using {grav:.2f}')
+
+    if feh < np.min(list_feh):
+        feh = np.min(list_feh)
+        print(f'Warning: [Fe/H] {original_feh} below grid minimum. Using {feh:.2f}')
+    elif feh > np.max(list_feh):
+        feh = np.max(list_feh)
+        print(f'Warning: [Fe/H] {original_feh} above grid maximum. Using {feh:.2f}')
+
+    # Find bounding grid points for all three dimensions
+    lowT = list_temp[list_temp <= temp].max() if any(list_temp <= temp) else list_temp.min()
+    uppT = list_temp[list_temp >= temp].min() if any(list_temp >= temp) else list_temp.max()
+    lowg = list_grav[list_grav <= grav].max() if any(list_grav <= grav) else list_grav.min()
+    uppg = list_grav[list_grav >= grav].min() if any(list_grav >= grav) else list_grav.max()
+    lowfeh = list_feh[list_feh <= feh].max() if any(list_feh <= feh) else list_feh.min()
+    uppfeh = list_feh[list_feh >= feh].min() if any(list_feh >= feh) else list_feh.max()
+
+    print(f"Interpolating between:")
+    print(f"  T=[{lowT:.0f}, {uppT:.0f}], log(g)=[{lowg:.2f}, {uppg:.2f}], [Fe/H]=[{lowfeh:.2f}, {uppfeh:.2f}]")
+
+    # Generate filenames for the eight corner points of the cube
+    def make_filename(T, g, feh_val):
+        # Handle the special case of 0.0 metallicity (always has minus sign)
+        if feh_val == 0.0:
+            feh_str = "-0.0"
+        elif feh_val > 0:
+            feh_str = f"+{feh_val:.1f}"
+        else:
+            feh_str = f"{feh_val:.1f}"  # Negative values already have minus sign
+        return f'lte{int(T):05d}-{g:.2f}{feh_str}.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits'
+
+    # Eight corners of the interpolation cube (T, g, feh)
+    model_files = {
+        'lowT_lowg_lowfeh': make_filename(lowT, lowg, lowfeh),
+        'lowT_lowg_uppfeh': make_filename(lowT, lowg, uppfeh),
+        'lowT_uppg_lowfeh': make_filename(lowT, uppg, lowfeh),
+        'lowT_uppg_uppfeh': make_filename(lowT, uppg, uppfeh),
+        'uppT_lowg_lowfeh': make_filename(uppT, lowg, lowfeh),
+        'uppT_lowg_uppfeh': make_filename(uppT, lowg, uppfeh),
+        'uppT_uppg_lowfeh': make_filename(uppT, uppg, lowfeh),
+        'uppT_uppg_uppfeh': make_filename(uppT, uppg, uppfeh),
+    }
+
+    # Check file existence
+    available_files = {k: (v in files) for k, v in model_files.items()}
+    missing_files = [f for f in model_files.values() if f not in files]
+
+    if not any(available_files.values()):
+        sys.exit(f'Error: No required files found for interpolation')
+
+    if missing_files:
+        print(f'Warning: {len(missing_files)} missing files. Using fallback strategy.')
+        # Implement fallback strategy similar to original but for 3D
+        fallback_map = create_3d_fallback_strategy(
+            available_files, model_files, list_temp, list_grav, list_feh,
+            lowT, uppT, lowg, uppg, lowfeh, uppfeh
+        )
+    else:
+        fallback_map = model_files
+
+    # Load wavelength grid and mu angles from first available file
+    first_available_key = next(k for k, v in available_files.items() if v)
+    first_file = path / model_files[first_available_key]
+
+    # Get wavelength and mu data
+    phoenix_wavelength, amu, is_vacuum_wl, wave_type = get_wavelength_and_mu(first_file)
+
+    # Reverse mu_angles if needed (verify based on your PHOENIX version)
+    if len(amu) > 1 and amu[0] < amu[-1]:
+        amu = amu[::-1]  # Ensure descending order (center to limb)
+
+    # Determine target wavelength array
+    if wv_array is not None:
+        target_wavelength = np.asarray(wv_array)
+    else:
+        if hasattr(star, 'wavelength_lower_limit') and hasattr(star, 'wavelength_upper_limit'):
+            wmin = max(phoenix_wavelength.min(), star.wavelength_lower_limit)
+            wmax = min(phoenix_wavelength.max(), star.wavelength_upper_limit)
+            mask = (phoenix_wavelength >= wmin) & (phoenix_wavelength <= wmax)
+            target_wavelength = phoenix_wavelength[mask]
+        else:
+            target_wavelength = phoenix_wavelength
+
+    # Create wavelength mask for loading Phoenix data
+    overhead = 50.0  # Angstrom overhead for interpolation
+    phoenix_min = max(phoenix_wavelength.min(), target_wavelength.min() - overhead)
+    phoenix_max = min(phoenix_wavelength.max(), target_wavelength.max() + overhead)
+
+    idx_wv_phoenix = ((phoenix_wavelength >= phoenix_min) &
+                      (phoenix_wavelength <= phoenix_max))
+    phoenix_wv_subset = phoenix_wavelength[idx_wv_phoenix]
+
+    # Load flux data for all eight corners
+    def load_flux_data(filename):
+        try:
+            filepath = path / filename
+            if not filepath.exists():
+                # Use fallback
+                filepath = path / fallback_map.get(filename, filename)
+
+            with fits.open(filepath) as hdul:
+                full_flux = hdul[0].data
+                if full_flux.shape[1] != len(phoenix_wavelength):
+                    sys.exit(f'Error: Flux wavelength dimension mismatch in {filename}')
+                return full_flux[:, idx_wv_phoenix]
+        except Exception as e:
+            sys.exit(f'Error reading {filename}: {e}')
+
+    flux_data = {}
+    for key, filename in model_files.items():
+        flux_data[key] = load_flux_data(filename)
+
+    # Perform trilinear interpolation
+    n_mu, n_wave = flux_data['lowT_lowg_lowfeh'].shape
+    flux_interpolated = np.zeros((n_mu, n_wave))
+
+    for i in range(n_mu):
+        for j in range(n_wave):
+            flux_interpolated[i, j] = trilinear_interpolate_point(
+                temp, grav, feh, lowT, uppT, lowg, uppg, lowfeh, uppfeh,
+                flux_data['lowT_lowg_lowfeh'][i, j],  # 000
+                flux_data['lowT_lowg_uppfeh'][i, j],  # 001
+                flux_data['lowT_uppg_lowfeh'][i, j],  # 010
+                flux_data['lowT_uppg_uppfeh'][i, j],  # 011
+                flux_data['uppT_lowg_lowfeh'][i, j],  # 100
+                flux_data['uppT_lowg_uppfeh'][i, j],  # 101
+                flux_data['uppT_uppg_lowfeh'][i, j],  # 110
+                flux_data['uppT_uppg_uppfeh'][i, j],  # 111
+            )
+
+    # Interpolate to target wavelength grid if needed
+    if not np.array_equal(target_wavelength, phoenix_wv_subset):
+        flux_final = interpolate_to_target_wavelength(
+            phoenix_wv_subset, flux_interpolated, target_wavelength,
+            interp_type, n_mu
+        )
+        final_wavelength = target_wavelength
+        final_flux = flux_final
+    else:
+        final_wavelength = phoenix_wv_subset
+        final_flux = flux_interpolated
+
+    # Convert vacuum to air wavelengths if requested
+    if convert_to_air and is_vacuum_wl:
+        final_wavelength = vacuum_to_air(final_wavelength)
+
+    # Create diagnostic plot if requested
+    if plot:
+        create_diagnostic_plot_with_feh(
+            final_wavelength, final_flux, amu, temp, grav, feh
+        )
+    return amu, final_wavelength, final_flux
+
+
+# Advanced cache management functions
+
+def clear_cache(star=None, cache_dir=None):
+    """
+    Clear all Phoenix cache files.
+
+    Parameters:
+    -----------
+    star : object, optional
+        Star object with models_root
+    cache_dir : str or Path, optional
+        Specific cache directory to clear
+    """
+    global PHOENIX_CACHE_DIR
+
+    if cache_dir:
+        target_dir = Path(cache_dir)
+    elif PHOENIX_CACHE_DIR:
+        target_dir = PHOENIX_CACHE_DIR
+    elif star:
+        target_dir = Path(star.models_root) / 'cache'
+    else:
+        print("Error: No cache directory specified")
+        return
+
+    if not target_dir.exists():
+        print(f"Cache directory does not exist: {target_dir}")
+        return
+
+    removed_count = 0
+    removed_size = 0
+
+    for file in target_dir.glob('phoenix_*.pkl'):
+        removed_size += file.stat().st_size
+        file.unlink()
+        removed_count += 1
+
+    print(f"Cleared {removed_count} cache files ({removed_size / (1024 ** 2):.1f} MB)")
+
+    # Reset statistics
+    global PHOENIX_CACHE_STATS
+    PHOENIX_CACHE_STATS = {'hits': 0, 'misses': 0, 'saves': 0}
+
+
+def get_cache_info(star=None, cache_dir=None):
+    """
+    Get information about the current cache status.
+
+    Returns:
+    --------
+    dict : Cache information including size, file count, and oldest/newest files
+    """
+    global PHOENIX_CACHE_DIR
+
+    if cache_dir:
+        target_dir = Path(cache_dir)
+    elif PHOENIX_CACHE_DIR:
+        target_dir = PHOENIX_CACHE_DIR
+    elif star:
+        target_dir = Path(star.models_root) / 'cache'
+    else:
+        return None
+
+    if not target_dir.exists():
+        return {
+            'directory': str(target_dir),
+            'exists': False,
+            'size_mb': 0,
+            'size_gb': 0,
+            'file_count': 0
+        }
+
+    cache_files = list(target_dir.glob('phoenix_*.pkl'))
+
+    if not cache_files:
+        return {
+            'directory': str(target_dir),
+            'exists': True,
+            'size_mb': 0,
+            'size_gb': 0,
+            'file_count': 0
+        }
+
+    total_size = sum(f.stat().st_size for f in cache_files)
+    cache_files.sort(key=lambda x: x.stat().st_mtime)
+
+    info = {
+        'directory': str(target_dir),
+        'exists': True,
+        'size_mb': total_size / (1024 ** 2),
+        'size_gb': total_size / (1024 ** 3),
+        'file_count': len(cache_files),
+        'oldest_file': cache_files[0].name if cache_files else None,
+        'newest_file': cache_files[-1].name if cache_files else None,
+        'oldest_date': cache_files[0].stat().st_mtime if cache_files else None,
+        'newest_date': cache_files[-1].stat().st_mtime if cache_files else None
+    }
+
+    # Add statistics if available
+    global PHOENIX_CACHE_STATS
+    total_requests = PHOENIX_CACHE_STATS['hits'] + PHOENIX_CACHE_STATS['misses']
+    if total_requests > 0:
+        info['hit_rate'] = PHOENIX_CACHE_STATS['hits'] / total_requests * 100
+        info['statistics'] = PHOENIX_CACHE_STATS.copy()
+
+    return info
+
+
+def get_cache_key(temp, grav, feh, wv_min, wv_max, interp_type, convert_to_air):
+    """
+    Generate a unique cache key for a specific interpolation request.
+
+    Parameters:
+    -----------
+    temp : float
+        Temperature in Kelvin
+    grav : float
+        Log surface gravity
+    feh : float
+        Metallicity [Fe/H]
+    wv_min : float
+        Minimum wavelength
+    wv_max : float
+        Maximum wavelength
+    interp_type : str
+        Interpolation type ('linear' or 'spline')
+    convert_to_air : bool
+        Whether wavelengths are converted to air
+
+    Returns:
+    --------
+    str : MD5 hash string (32 characters)
+    """
+    key_str = f"T{temp:.0f}_g{grav:.3f}_feh{feh:.2f}_wv{wv_min:.1f}-{wv_max:.1f}_{interp_type}_air{convert_to_air}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def get_cache_path(star, cache_key):
+    """
+    Get the full path for a cache file.
+
+    Parameters:
+    -----------
+    star : object
+        Star object with models_root attribute
+    cache_key : str
+        Cache key (typically from get_cache_key function)
+
+    Returns:
+    --------
+    Path : Full path to the cache file
+    """
+
+    if PHOENIX_CACHE_DIR is None:
+        # Use default location under models_root
+        cache_dir = Path(star.models_root) / 'cache'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        cache_dir = PHOENIX_CACHE_DIR
+
+    return cache_dir / f"phoenix_{cache_key}.pkl"
+
+def precompute_grid_cache(star, temp_range, grav_range, feh_range,
+                          wv_array=None, interp_type='linear',
+                          convert_to_air=True, verbose=True):
+    """
+    Precompute and cache interpolations for a grid of stellar parameters.
+    Useful for batch processing or preparing for real-time analysis.
+
+    Parameters:
+    -----------
+    star : object
+        Star object with models_root
+    temp_range : tuple or list
+        (min, max, step) or list of temperatures in K
+    grav_range : tuple or list
+        (min, max, step) or list of log(g) values
+    feh_range : tuple or list
+        (min, max, step) or list of [Fe/H] values
+    wv_array : array, optional
+        Wavelength array to use
+    interp_type : str
+        Interpolation type
+    convert_to_air : bool
+        Whether to convert to air wavelengths
+    verbose : bool
+        Print progress information
+
+    Returns:
+    --------
+    int : Number of models computed and cached
+    """
+
+    # Parse parameter ranges
+    if len(temp_range) == 3:
+        temps = np.arange(temp_range[0], temp_range[1] + temp_range[2], temp_range[2])
+    else:
+        temps = np.array(temp_range)
+
+    if len(grav_range) == 3:
+        gravs = np.arange(grav_range[0], grav_range[1] + grav_range[2], grav_range[2])
+    else:
+        gravs = np.array(grav_range)
+
+    if len(feh_range) == 3:
+        fehs = np.arange(feh_range[0], feh_range[1] + feh_range[2], feh_range[2])
+    else:
+        fehs = np.array(feh_range)
+
+    total = len(temps) * len(gravs) * len(fehs)
+    computed = 0
+    skipped = 0
+
+    if verbose:
+        print(f"Precomputing grid cache for {total} parameter combinations...")
+        print(f"  Temperatures: {len(temps)} values from {temps.min():.0f} to {temps.max():.0f} K")
+        print(f"  log(g): {len(gravs)} values from {gravs.min():.2f} to {gravs.max():.2f}")
+        print(f"  [Fe/H]: {len(fehs)} values from {fehs.min():.2f} to {fehs.max():.2f}")
+
+    for i, temp in enumerate(temps):
+        for j, grav in enumerate(gravs):
+            for k, feh in enumerate(fehs):
+                # Check if already cached
+                if wv_array is not None:
+                    wv_min, wv_max = np.min(wv_array), np.max(wv_array)
+                elif hasattr(star, 'wavelength_lower_limit'):
+                    wv_min = star.wavelength_lower_limit
+                    wv_max = star.wavelength_upper_limit
+                else:
+                    wv_min, wv_max = 0, 1e10
+
+                cache_key = get_cache_key(temp, grav, feh, wv_min, wv_max,
+                                          interp_type, convert_to_air)
+                cache_path = get_cache_path(star, cache_key)
+
+                if cache_path.exists():
+                    skipped += 1
+                    continue
+
+                # Compute and cache
+                try:
+                    _ = interpolate_Phoenix_mu_lc_with_metallicity(
+                        star, temp, grav, feh, wv_array=wv_array,
+                        interp_type=interp_type, convert_to_air=convert_to_air,
+                        plot=False, use_cache=True
+                    )
+                    computed += 1
+
+                    if verbose and computed % 10 == 0:
+                        progress = (i * len(gravs) * len(fehs) +
+                                    j * len(fehs) + k + 1) / total * 100
+                        print(f"  Progress: {progress:.1f}% ({computed} computed, {skipped} skipped)")
+
+                except Exception as e:
+                    print(f"  Error computing T={temp:.0f}, log(g)={grav:.2f}, [Fe/H]={feh:.2f}: {e}")
+
+    if verbose:
+        print(f"Precomputation complete: {computed} new models cached, {skipped} already existed")
+        cache_info = get_cache_info(star)
+        if cache_info:
+            print(f"Cache size: {cache_info['size_gb']:.2f} GB, {cache_info['file_count']} files")
+
+    return computed
+
+
+def trilinear_interpolate_point(temp, grav, feh, temp_low, temp_high,
+                                grav_low, grav_high, feh_low, feh_high,
+                                f000, f001, f010, f011, f100, f101, f110, f111):
+    """
+    Trilinear interpolation for a single point in 3D parameter space.
+
+    The eight flux values correspond to corners of the cube:
+    fijk where i,j,k are binary indices for (temp, grav, feh)
+    000 = (low_T, low_g, low_feh)
+    001 = (low_T, low_g, high_feh)
+    010 = (low_T, high_g, low_feh)
+    ... etc
+    """
+
+    # Handle edge cases where grid points are identical
+    if temp_high == temp_low:
+        temp_weight = 0.0
+    else:
+        temp_weight = (temp - temp_low) / (temp_high - temp_low)
+
+    if grav_high == grav_low:
+        grav_weight = 0.0
+    else:
+        grav_weight = (grav - grav_low) / (grav_high - grav_low)
+
+    if feh_high == feh_low:
+        feh_weight = 0.0
+    else:
+        feh_weight = (feh - feh_low) / (feh_high - feh_low)
+
+    # Trilinear interpolation formula
+    c00 = f000 * (1 - temp_weight) + f100 * temp_weight
+    c01 = f001 * (1 - temp_weight) + f101 * temp_weight
+    c10 = f010 * (1 - temp_weight) + f110 * temp_weight
+    c11 = f011 * (1 - temp_weight) + f111 * temp_weight
+
+    c0 = c00 * (1 - grav_weight) + c10 * grav_weight
+    c1 = c01 * (1 - grav_weight) + c11 * grav_weight
+
+    result = c0 * (1 - feh_weight) + c1 * feh_weight
+
+    return result
+
+
+def create_3d_fallback_strategy(available_files, model_files, list_temp, list_grav,
+                                list_feh, lowT, uppT, lowg, uppg, lowfeh, uppfeh):
+    """
+    Create fallback mapping for missing files in 3D parameter space.
+    Prioritizes nearest neighbors in parameter space.
+    """
+    fallback_map = {}
+
+    def make_filename(T, g, feh_val):
+        if feh_val == 0.0:
+            feh_str = "-0.0"
+        elif feh_val > 0:
+            feh_str = f"+{feh_val:.1f}"
+        else:
+            feh_str = f"{feh_val:.1f}"
+        return f'lte{int(T):05d}-{g:.2f}{feh_str}.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits'
+
+    # Define corner points
+    corners = {
+        'lowT_lowg_lowfeh': (lowT, lowg, lowfeh),
+        'lowT_lowg_uppfeh': (lowT, lowg, uppfeh),
+        'lowT_uppg_lowfeh': (lowT, uppg, lowfeh),
+        'lowT_uppg_uppfeh': (lowT, uppg, uppfeh),
+        'uppT_lowg_lowfeh': (uppT, lowg, lowfeh),
+        'uppT_lowg_uppfeh': (uppT, lowg, uppfeh),
+        'uppT_uppg_lowfeh': (uppT, uppg, lowfeh),
+        'uppT_uppg_uppfeh': (uppT, uppg, uppfeh),
+    }
+
+    for corner_key, (target_T, target_g, target_feh) in corners.items():
+        if available_files[corner_key]:
+            fallback_map[model_files[corner_key]] = model_files[corner_key]
+            continue
+
+        # Find nearest available model in 3D parameter space
+        min_distance = float('inf')
+        best_fallback = None
+
+        for other_key, is_available in available_files.items():
+            if is_available:
+                other_T, other_g, other_feh = corners[other_key]
+                # Normalized distance in parameter space
+                distance = np.sqrt(
+                    ((other_T - target_T) / 1000) ** 2 +  # Normalize T by 1000K
+                    ((other_g - target_g) * 2) ** 2 +  # Weight log(g) differences
+                    ((other_feh - target_feh) * 2) ** 2  # Weight [Fe/H] differences
+                )
+
+                if distance < min_distance:
+                    min_distance = distance
+                    best_fallback = model_files[other_key]
+
+        if best_fallback:
+            fallback_map[model_files[corner_key]] = best_fallback
+            if min_distance > 2.0:  # Warn if fallback is far
+                print(f"  Warning: Using distant fallback for {corner_key}, distance={min_distance:.2f}")
+        else:
+            # Last resort: search entire grid
+            for T in list_temp:
+                for g in list_grav:
+                    for feh_val in list_feh:
+                        test_file = make_filename(T, g, feh_val)
+                        if test_file in [model_files[k] for k in available_files if available_files[k]]:
+                            fallback_map[model_files[corner_key]] = test_file
+                            print(f"  Using grid search fallback for {corner_key}")
+                            break
+                    if model_files[corner_key] in fallback_map:
+                        break
+                if model_files[corner_key] in fallback_map:
+                    break
+
+    return fallback_map
+
+
+def interpolate_to_target_wavelength(source_wv, source_flux, target_wv, interp_type, n_mu):
+    """
+    Interpolate flux from source wavelength grid to target wavelength grid.
+    """
+    flux_final = np.zeros((n_mu, len(target_wv)))
+
+    for i in range(n_mu):
+        if interp_type == 'linear':
+            interp_func = interp1d(
+                source_wv, source_flux[i, :],
+                kind='linear', bounds_error=False, fill_value=np.nan
+            )
+            flux_final[i, :] = interp_func(target_wv)
+        elif interp_type == 'spline':
+            spline = UnivariateSpline(source_wv, source_flux[i, :], s=0, k=3)
+            flux_final[i, :] = spline(target_wv)
+        else:
+            raise ValueError(f'Interpolation type {interp_type} not supported')
+
+    # Handle NaN values with nearest-neighbor extrapolation
+    nan_mask = np.isnan(flux_final)
+    if np.any(nan_mask):
+        print(f"Warning: {np.sum(nan_mask)} points outside Phoenix range, using extrapolation")
+        for i in range(n_mu):
+            if np.any(nan_mask[i, :]):
+                flux_final[i, :] = forward_backward_fill(flux_final[i, :])
+
+    return flux_final
+
+
+def create_diagnostic_plot_with_feh(wavelength, flux, mu_angles, temp, grav, feh):
+    """Create diagnostic plots for the interpolation results including metallicity."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+
+    # Plot spectra at different mu angles
+    n_plot = min(5, len(mu_angles))
+    indices = np.linspace(0, len(mu_angles) - 1, n_plot, dtype=int)
+
+    for idx in indices:
+        label = f'μ = {mu_angles[idx]:.2f}'
+        ax1.plot(wavelength, flux[idx, :], label=label, alpha=0.8)
+
+    ax1.set_xlabel('Wavelength (Å)')
+    ax1.set_ylabel('Specific Intensity')
+    ax1.set_title(f'PHOENIX SpecInt: T={temp:.0f}K, log g={grav:.2f}, [Fe/H]={feh:.2f}')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Plot limb darkening curve at a representative wavelength
+    mid_idx = len(wavelength) // 2
+    ax2.plot(mu_angles, flux[:, mid_idx], 'o-', label=f'λ = {wavelength[mid_idx]:.1f} Å')
+    ax2.set_xlabel('μ = cos(θ)')
+    ax2.set_ylabel('Specific Intensity')
+    ax2.set_title('Limb Darkening Profile')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# Helper function needed from original (add to the file)
+def get_wavelength_and_mu(fits_file):
+    """Extract wavelength grid and mu angles from SpecInt FITS file"""
+    with fits.open(fits_file) as hdul:
+        header = hdul[0].header
+
+        # Extract WCS parameters for wavelength
+        crval1 = header['CRVAL1']  # Wavelength of reference pixel
+        cdelt1 = header['CDELT1']  # Wavelength step size
+        crpix1 = header['CRPIX1']  # Reference pixel (usually 1)
+        ctype1 = header['CTYPE1']  # Grid type
+        naxis1 = header['NAXIS1']  # Number of wavelength points
+
+        # Create wavelength array
+        if 'LOG' in ctype1:
+            # Logarithmic grid
+            log_wave = crval1 + cdelt1 * (np.arange(naxis1) + 1 - crpix1)
+            wavelength = 10 ** log_wave
+        else:
+            # Linear grid
+            wavelength = crval1 + cdelt1 * (np.arange(naxis1) + 1 - crpix1)
+
+        # Check vacuum vs air wavelengths
+        is_vacuum = ctype1.startswith('WAVE')
+
+        # Get mu angles from second extension
+        mu_angles = hdul[1].data
+
+        return wavelength, mu_angles, is_vacuum, ctype1
 
 def vacuum_to_air(wavelength_vacuum):
     """
@@ -664,6 +1798,7 @@ def create_diagnostic_plot(wavelength, flux, mu_angles, temp, grav):
 
     plt.tight_layout()
     plt.show()
+
 
 def keplerian_orbit(x,params):
     period=params[0]

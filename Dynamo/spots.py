@@ -240,9 +240,8 @@ class SpotsGenerator(object):
 
         # Calculate total number of spots if not provided
         if nspots is None:
-
             base_rate = 0.1 * np.sqrt(activity_level)  # spots per day. No theoretical intuition.
-            nspots = int(base_rate * ndays)
+            nspots = min(max(int(base_rate * ndays), 20), 500)  # minimum 20 spots, maximum 500. arbitrary
 
         self.nspots = nspots
 

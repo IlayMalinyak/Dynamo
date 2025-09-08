@@ -1,8 +1,9 @@
 examples/images
-dataset/images
+dataset/
 Dynamo/__pycache__/
 dataset/*/*.pqt
 dataset/*/*.json
 dataset_new_interp/
 tests/
 images/
+FASMA-synthesis/

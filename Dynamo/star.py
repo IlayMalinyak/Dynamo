@@ -77,6 +77,7 @@ class Star:
         self.simulation_mode = self._get_config_value('general', 'simulation_mode')
         self.wavelength_lower_limit = self._get_config_value('general', 'wavelength_lower_limit', float)
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
+        self.spectra_resolution = self._get_config_value('general', 'spectra_resolution', int)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
 
     def _initialize_star_params(self):
@@ -189,6 +190,7 @@ class Star:
         self.luminosity = params_dict['L']
         self.temperature_photosphere = params_dict['Teff']
         self.logg = params_dict['logg']
+        self.feh = params_dict['FeH']
         self.age = params_dict['age']
         self.cdpp = params_dict['CDPP']
         self.outliers_rate = params_dict['Outlier Rate']
@@ -342,13 +344,11 @@ class Star:
     def compute_forward(self, t=None, wv_array=None):
         print(f"\ncomputing forward with: {len(self.spot_map)} spots and {int(self.simulate_planet)} planets")
         self.inclination = np.deg2rad(self.inclination)
-        # self.spot_T_contrast = np.random.randint(low=self.spot_T_contrast_min, high=self.spot_T_contrast_max)
         self.spot_T_contrast = 200
         self.tau_emerge = min(2, self.rotation_period * self.spots_decay_time / 10)
         self.tau_decay = max(self.rotation_period * self.spots_decay_time, 50)
         self.results = {}
-        self.wavelength_lower_limit = float(self.conf_file.get('general',
-                                                               'wavelength_lower_limit'))  # Repeat this just in case CRX has modified the values
+        self.wavelength_lower_limit = float(self.conf_file.get('general', 'wavelength_lower_limit'))
         self.wavelength_upper_limit = float(self.conf_file.get('general', 'wavelength_upper_limit'))
 
         if t is None:
@@ -358,72 +358,67 @@ class Star:
 
         Ngrid_in_ring, cos_centers, proj_area, phi, theta, vec_grid = self.get_theta_phi()
 
-        # Main core of the method. Dependingon the observables you want, use lowres or high res spectra
+        sini, wvp, photo_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
+            self, self.temperature_photosphere, self.logg, self.feh, wv_array=wv_array, plot=True
+        )
+        sini, wvp, spot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
+            self, self.temperature_spot, self.logg, self.feh, wv_array=wv_array
+        )
+        # For LIGHT CURVES: Apply photometric filter and compute integrated flux
+        f_filt_lc = spectra.interpolate_filter(self, self.filter_name)
 
-        # Interpolate PHOENIX intensity models, only spot and photosphere
-        sini, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
-                                                                 self.temperature_photosphere,
-                                                                 self.logg,
-                                                                 wv_array=wv_array)  # sini is the angles at which the model is computed.
-        sini, wvp_lc, spot_flux = spectra.interpolate_Phoenix_mu_lc(self,
-                                                                 self.temperature_spot,
-                                                                 self.logg,
-                                                                 wv_array=wv_array)
+        brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(
+            self, Ngrid_in_ring, sini, cos_centers, proj_area,
+            photo_flux, f_filt_lc, wvp, self.vsini
+        )
 
-        # Read filter and interpolate it in order to convolve it with the spectra
-        f_filt = spectra.interpolate_filter(self, self.filter_name)
+        brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(
+            self, Ngrid_in_ring, sini, cos_centers, proj_area,
+            spot_flux, f_filt_lc, wvp, self.vsini
+        )
 
-        brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(self,
-                                                                         Ngrid_in_ring,
-                                                                         sini,  # acd (Phoenix mu angles)
-                                                                         cos_centers,  # amu (grid mu values)
-                                                                         proj_area,  # pare (projected areas)
-                                                                         photo_flux,  # flnp (flux at each angle)
-                                                                         f_filt,
-                                                                         wvp_lc,
-                                                                         self.vsini)
-
-
-        brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(self,
-                                                                         Ngrid_in_ring,
-                                                                         sini,  # acd (Phoenix mu angles)
-                                                                         cos_centers,  # amu (grid mu values)
-                                                                         proj_area,  # pare (projected areas)
-                                                                         spot_flux,  # flnp (flux at each angle)
-                                                                         f_filt,
-                                                                         wvp_lc,
-                                                                         self.vsini)
         brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp  # if there are no faculae
         if self.facular_area_ratio > 0:
             raise NotImplementedError('facular calculation is not yet implemented')
 
+        # Generate rotation light curve
         rotator = Rotator(self)
-
-        spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl = rotator.generate_rotating_photosphere_lc(Ngrid_in_ring
-                                                                                       , proj_area, cos_centers,
-                                                                                       brigh_grid_ph,
-                                                                                       brigh_grid_sp,
-                                                                                       brigh_grid_fc,
-                                                                                       flx_ph, vec_grid,
-                                                                                       plot_map=self.plot_grid_map)
+        spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl = rotator.generate_rotating_photosphere_lc(
+            Ngrid_in_ring, proj_area, cos_centers,
+            brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
+            flx_ph, vec_grid, plot_map=self.plot_grid_map
+        )
         self.final_spots_positions = spots_positions
 
-        lamost_spectra, wvp_lc = self.create_lamost_spectra(wvp_lc, ff_sp)
+        # For SPECTRA: Use the SAME Phoenix models, just with spectroscopic filter
+        # No need to recalculate Phoenix models!
+        if wv_array is not None or hasattr(self, 'spectra_filter_name'):
+            # Create spectra using the already-computed Phoenix models
+            spectra_flux, wvp_spec = spectra.create_observed_spectra(
+                self, wvp, photo_flux, spot_flux, sini, ff_sp,
+                spectra_filter_name=self.spectra_filter_name
+            )
+        else:
+            spectra_flux = None
+            wvp_spec = wvp
 
+        # Store results
         self.results['time'] = t
         self.results['lc'] = FLUX
-        self.results['spectra'] = lamost_spectra
+        self.results['spectra'] = spectra_flux
         self.results['ff_ph'] = ff_ph
         self.results['ff_sp'] = ff_sp
         self.results['ff_pl'] = ff_pl
         self.results['ff_fc'] = ff_fc
         self.results['flp'] = flx_ph
-        self.results['wvp'] = wvp_lc
+        self.results['wvp'] = wvp_spec if spectra_flux is not None else wvp
 
+        # Calculate RV if planet present
         if self.simulate_planet:
-            rvkepler = spectra.keplerian_orbit(t,
-                                               [self.planet_period, self.planet_semi_amplitude, self.planet_esinw,
-                                                self.planet_ecosw, self.planet_transit_t0])
+            rvkepler = spectra.keplerian_orbit(
+                t, [self.planet_period, self.planet_semi_amplitude,
+                    self.planet_esinw, self.planet_ecosw, self.planet_transit_t0]
+            )
         else:
             rvkepler = 0.0
 
