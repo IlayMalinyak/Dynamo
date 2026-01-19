@@ -122,11 +122,11 @@ class Rotator():
             filling_pl[k] = 100 * filling_pl[k] / total_area
 
             # Status output
-            sys.stdout.write(
-                "\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. flux={5:.3f}%. flx_ph={6:.3f}%."
-                " [{7}/{8}]%".format(
-                    t, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k], flux[k], flx_ph, k + 1,
-                    len(self.star.obs_times)))
+            # sys.stdout.write(
+            #     "\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. flux={5:.3f}%. flx_ph={6:.3f}%."
+            #     " [{7}/{8}]%".format(
+            #         t, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k], flux[k], flx_ph, k + 1,
+            #         len(self.star.obs_times)))
 
         # Create plots if requested
         if plot_map:

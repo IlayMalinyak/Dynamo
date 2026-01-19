@@ -65,21 +65,70 @@ def age_activity_relation(age, saturation_age_gyr=0.1):
     """
     ar = (age / AGE_SUN) ** (-2.8)
     old_indices = np.where(age > 1)[0]
-    transition_idx_up = np.argmin(age[old_indices] - 1)
-    transition_value_up = ar[old_indices][transition_idx_up]
+    transition_idx_up = np.argmin(age[old_indices] - 1) if len(old_indices) > 0 else 0
+    transition_value_up = ar[old_indices][transition_idx_up] if len(old_indices) > 0 else 0
+    
     young_indices = np.where(age <= 1)[0]
-    ar[young_indices] = (age[young_indices] / AGE_SUN) ** (-1.2)
-    transition_idx_low = np.argmin(1 - age[young_indices])
-    transition_value_low = ar[young_indices][transition_idx_low]
-    diff = transition_value_up - transition_value_low
-    ar[young_indices] += diff
+    if len(young_indices) > 0:
+        ar[young_indices] = (age[young_indices] / AGE_SUN) ** (-1.2)
+        transition_idx_low = np.argmin(1 - age[young_indices])
+        transition_value_low = ar[young_indices][transition_idx_low]
+        diff = transition_value_up - transition_value_low
+        ar[young_indices] += diff
+        
     saturation_idx = np.where(age < saturation_age_gyr)[0]
     closest_idx = np.argmin(np.abs(saturation_age_gyr - age))
     ar[saturation_idx] = ar[closest_idx]
     return ar
 
 
-def generate_simdata(root, Nlc, logger, sim_name='dataset'):
+
+def calculate_cdpp(L, Nlc):
+    """
+    Calculate CDPP (Noise) based on Luminosity and random Distance.
+    
+    Parameters:
+    -----------
+    L : float array
+        Luminosity array (L_sun)
+    Nlc : int
+        Number of light curves
+        
+    Returns:
+    --------
+    cdpp : float array
+        Calculated CDPP in ppm
+    """
+    # 1. Assign distances (Uniform volume density: r ~ U^(1/3))
+    # Range: 100 pc to 1000 pc (typical Kepler field)
+    u_dist = np.random.uniform(100**3, 1000**3, size=Nlc)
+    distance = u_dist**(1/3) # parsecs
+
+    # 2. Calculate Apparent Magnitude
+    # Absolute Bolometric Magnitude
+    M_bol = 4.74 - 2.5 * np.log10(L)
+    # Bolometric correction (Simplification: neglect BC for now, assume Kp ~ Bol)
+    # Distance Modulus: m - M = 5 * log10(d / 10)
+    m_Kp = M_bol + 5 * np.log10(distance / 10)
+
+    # 3. Calculate CDPP (ppm) - Approximate Kepler noise model
+    # Noise = Shot Noise + Read Noise + Jitter
+    # Simplified power law roughly matching Kepler: ~30ppm at mag 12, ~100ppm at mag 14
+    # log10(CDPP) ~ 0.2 * m + C
+    # 30 = 10^(0.2*12 + C) -> 1.477 = 2.4 + C -> C = -0.92
+    # Let's use a slightly more robust polynomial or just this power law for shot noise regime.
+    # CDPP_12 = 30. ppm
+    # CDPP = CDPP_12 * 10**(0.2 * (m_Kp - 12))
+    # We add a noise floor of 10 ppm
+    cdpp = 30.0 * 10**(0.2 * (m_Kp - 12.0)) + 10.0
+    
+    # Clip very noisy stars (e.g. > 2000 ppm)
+    cdpp = np.clip(cdpp, 0, 5000)
+    
+    return cdpp
+
+
+def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     """Generate simulation data and save distributions."""
     logger.info(f"Generating simulation data for {Nlc} light curves")
 
@@ -92,7 +141,7 @@ def generate_simdata(root, Nlc, logger, sim_name='dataset'):
     mask = tau_evol < 2
     tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
-    diffrot_shear = np.random.uniform(0, 1, size=Nlc)
+    diffrot_shear = np.random.uniform(0, 0.4, size=Nlc)
     mass = sample_kroupa_imf(Nlc, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=Nlc)
@@ -119,7 +168,10 @@ def generate_simdata(root, Nlc, logger, sim_name='dataset'):
         prot = np.concatenate((prot1, prot2))
         np.random.shuffle(prot)
     # generate clean samples
-    cdpp = 0
+    if add_noise:
+        cdpp = calculate_cdpp(L, Nlc)
+    else:
+        cdpp = 0
     # outlier_rate = np.random.uniform(0, 0.003, size=Nlc) # example of outlier rate
     outlier_rate = 0
     # flicker = np.random.uniform(0, 0.3, size=Nlc) # example of flicker
@@ -399,6 +451,8 @@ def main():
                         help='Number of days to simulate (default: 1000)')
     parser.add_argument('--n_cpu', type=float, default=1,
                         help='Number of CPU cores to use (default: 1)')
+    parser.add_argument('--add_noise', action='store_true',
+                        help='Add luminosity-dependent noise to light curves')
 
     # Parse arguments
     args = parser.parse_args()
@@ -412,6 +466,7 @@ def main():
     os.makedirs(f"{args.dataset_dir}/configs", exist_ok=True)
     os.makedirs('images', exist_ok=True)
 
+    print(f"running create_data.py with {args.num_simulations} simulations and {args.n_cpu} CPU cores")
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
@@ -430,7 +485,7 @@ def main():
     else:
         # Generate simulations
         logger.info(f"Generating {args.num_simulations} simulations.")
-        sims = generate_simdata(args.dataset_dir, args.num_simulations, logger)
+        sims = generate_simdata(args.dataset_dir, args.num_simulations, logger, add_noise=args.add_noise)
 
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())
@@ -462,9 +517,22 @@ def main():
                   args.plot_dir, args.plot_every,)
                  for i, row in sims.iterrows()]
 
-    # Run simulations in parallel
-    with mp.Pool(processes=num_cpus) as pool:
-        results = list(tqdm(pool.imap(worker_function, args_list), total=len(args_list), desc="Simulating"))
+    # Run simulations
+    if num_cpus == 1:
+        # Run sequentially without multiprocessing for easier debugging and Ctrl+C support
+        logger.info("Running in serial mode (n_cpu=1) - Ctrl+C enabled")
+        results = []
+        for arg in tqdm(args_list, desc="Simulating"):
+            results.append(worker_function(arg))
+    else:
+        # Run in parallel
+        with mp.Pool(processes=num_cpus) as pool:
+            try:
+                results = list(tqdm(pool.imap(worker_function, args_list), total=len(args_list), desc="Simulating"))
+            except KeyboardInterrupt:
+                pool.terminate()
+                pool.join()
+                sys.exit(1)
 
     # Calculate time taken
     end_time = time.time()

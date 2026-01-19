@@ -106,6 +106,8 @@ class Star:
         self.reference_time = self._get_config_value('spots', 'reference_time', float)
         self.spots_decay_time = self._get_config_value('spots', 'spots_decay_time', float)
         self.max_n_spots = self._get_config_value('spots', 'max_n_spots', float)
+        val = self._get_config_value('spots', 'max_area', float)
+        self.spot_max_area = val if val is not None else 100.0
 
 
     def _initialize_noise_params(self):
@@ -218,7 +220,12 @@ class Star:
 
 
     def generate_spot_map(self, ndays):
-        s = spots.SpotsGenerator()
+        # Scale max_area by stellar surface area (R^2) relative to Sun (R=1)
+        # Default max_area is ~3000-5000 MSH (Micro-Solar-Hemispheres) for Solar-like stars
+        # If we don't scale, a 3000 MSH spot on a 0.3 R_sun star covers 10x more fraction of the disk!
+        scaled_max_area = self.spot_max_area * (self.radius ** 2)
+
+        s = spots.SpotsGenerator(max_area=scaled_max_area)
         regions = s.emerge_regions(
             ndays=ndays,
             activity_level=self.activity,
@@ -240,7 +247,11 @@ class Star:
         spots_config[:, 3] = np.rad2deg((regions['phpos'] + regions['phneg']) / 2)
         spots_config[:, 4] = np.sqrt(regions['bmax']) # bmax is proportional to area (radius ** 2)
         self.spot_map = spots_config
-        self.n_grid_rings = int(max(10, 120/(spots_config[:, 4].min()))) if len(spots_config) > 0 else 10
+        if len(spots_config) > 0:
+            recommended_n = 120 / (spots_config[:, 4].min())
+            self.n_grid_rings = int(max(10, min(recommended_n, 20))) # Cap resolution to prevent slowdowns
+        else:
+            self.n_grid_rings = 10
         print("number of spots: ", len(regions), 'activity: ', self.activity)
         print("number of grid rings: ", self.n_grid_rings)
 
@@ -372,6 +383,12 @@ class Star:
             brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
             flx_ph, vec_grid, plot_map=self.plot_grid_map
         )
+
+        # Apply Noise (CDPP in ppm)
+        if hasattr(self, 'cdpp') and self.cdpp > 0:
+            noise = np.random.normal(0, self.cdpp * 1e-6, len(FLUX))
+            FLUX += noise
+
         self.final_spots_positions = spots_positions
 
         # For SPECTRA: Use the SAME Phoenix models, just with spectroscopic filter
