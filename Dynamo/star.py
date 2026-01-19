@@ -67,7 +67,6 @@ class Star:
         """Initialize file-related parameters."""
         self.models_root = self._get_config_value(section='files', key='models_root')
         self.filter_name = self._get_config_value('files', 'filter_name')
-        self.spectra_filter_name = self._get_config_value('files', 'spectra_filter_name')
         self.orders_CRX_filename = self._get_config_value('files', 'orders_CRX_filename')
 
         self.models_root = Path(self.models_root)
@@ -77,8 +76,43 @@ class Star:
         self.simulation_mode = self._get_config_value('general', 'simulation_mode')
         self.wavelength_lower_limit = self._get_config_value('general', 'wavelength_lower_limit', float)
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
-        self.spectra_resolution = self._get_config_value('general', 'spectra_resolution', int)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
+        
+        # Parse spectra configurations (names, resolutions, filters)
+        spectra_names_str = self._get_config_value('general', 'spectra_names', str)
+        self.spectra_names = [s.strip() for s in spectra_names_str.split(',')] if spectra_names_str else []
+
+        spectra_resolutions_str = self._get_config_value('general', 'spectra_resolutions', str)
+        self.spectra_resolutions = [int(s.strip()) for s in spectra_resolutions_str.split(',')] if spectra_resolutions_str else []
+
+        spectra_filters_str = self._get_config_value('general', 'spectra_filters', str)
+        self.spectra_filters = []
+        if spectra_filters_str:
+            for s in spectra_filters_str.split(','):
+                val = s.strip()
+                self.spectra_filters.append(None if val == 'None' else val)
+
+        spectra_ranges_str = self._get_config_value('general', 'spectra_ranges', str)
+        self.spectra_ranges = []
+        if spectra_ranges_str:
+            for s in spectra_ranges_str.split(','):
+                parts = s.strip().split('-')
+                if len(parts) == 2:
+                    self.spectra_ranges.append((float(parts[0]), float(parts[1])))
+                else:
+                    self.spectra_ranges.append(None)
+        else:
+             self.spectra_ranges = [None] * len(self.spectra_names)
+
+        # Validate configuration lengths
+        if not (len(self.spectra_names) == len(self.spectra_resolutions) == len(self.spectra_filters)):
+            print("Warning: Spectra configuration names/resolutions/filters lengths do not match in starsim.conf")
+            # Handle mismatch gracefully
+            min_len = min(len(self.spectra_names), len(self.spectra_resolutions), len(self.spectra_filters))
+            self.spectra_names = self.spectra_names[:min_len]
+            self.spectra_resolutions = self.spectra_resolutions[:min_len]
+            self.spectra_filters = self.spectra_filters[:min_len]
+            self.spectra_ranges = self.spectra_ranges[:min_len] if len(self.spectra_ranges) >= min_len else self.spectra_ranges + [None]*(min_len - len(self.spectra_ranges))
 
     def _initialize_star_params(self):
         """Initialize star-related parameters."""
@@ -391,9 +425,11 @@ class Star:
 
         self.final_spots_positions = spots_positions
 
-        # For SPECTRA: Use the SAME Phoenix models, just with spectroscopic filter
-        # No need to recalculate Phoenix models!
-        if hasattr(self, 'spectra_filter_name'):
+        # For SPECTRA: Loop through configured instruments
+        # Use the SAME Phoenix models, just with different resolutions/filters
+        self.results['spectra'] = {} # Initialize as dictionary
+        
+        if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
             # Pick a random time point for the spectral snapshot (simulate a single observation)
             # We want to capture the star at a specific rotational phase
             n_times = len(ff_sp)
@@ -404,25 +440,43 @@ class Star:
             self.results['spectra_time'] = self.obs_times[idx_spec] if self.obs_times is not None else idx_spec
             self.results['spectra_ff_sp'] = ff_sp_snapshot
 
-            # Create spectra using the SNAPSHOT filling factor
-            spectra_flux, wvp_spec = spectra.create_observed_spectra(
-                self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
-                spectra_filter_name=self.spectra_filter_name
-            )
+            for name, resolution, filt_name, wv_range in zip(self.spectra_names, self.spectra_resolutions, self.spectra_filters, self.spectra_ranges):
+                # Temporarily set resolution (needed by create_observed_spectra legacy code or update it)
+                # Actually, create_synthetic_spectra uses self.spectra_resolution
+                self.spectra_resolution = resolution 
+                
+                # Create spectra using the SNAPSHOT filling factor
+                spectra_flux, wvp_spec = spectra.create_observed_spectra(
+                    self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
+                    spectra_filter_name=filt_name
+                )
+                
+                # Cut wavelength range if specified
+                if wv_range is not None:
+                    min_wv, max_wv = wv_range
+                    mask = (wvp_spec >= min_wv) & (wvp_spec <= max_wv)
+                    wvp_spec = wvp_spec[mask]
+                    spectra_flux = spectra_flux[mask]
+
+                # Store tuple (wavelength, flux)
+                self.results['spectra'][name] = (wvp_spec, spectra_flux)
         else:
-            spectra_flux = None
-            wvp_spec = wvp
+            # Legacy fallback or empty
+            pass
 
         # Store results
         self.results['time'] = t
         self.results['lc'] = FLUX
-        self.results['spectra'] = spectra_flux
+        # self.results['spectra'] is now a dictionary
         self.results['ff_ph'] = ff_ph
         self.results['ff_sp'] = ff_sp
         self.results['ff_pl'] = ff_pl
         self.results['ff_fc'] = ff_fc
         self.results['flp'] = flx_ph
-        self.results['wvp'] = wvp_spec if spectra_flux is not None else wvp
+        # Store full wavelength grid for metadata purposes (use copy to ensure persistence)
+        self.results['wvp'] = wvp.copy()
+
+
 
         # Calculate RV if planet present
         if self.simulate_planet:

@@ -273,6 +273,78 @@ def plot_pairplot(sims, Nlc, root, sim_name):
     plt.savefig(f"{root}/{sim_name}_pairplot.png", dpi=150)
     plt.close()
 
+def save_batch(batch_results, batch_idx, dataset_dir):
+    """
+    Save a batch of simulation results to chunked files.
+    """
+    if not batch_results:
+        return
+
+    lcs = []
+    spots = []
+    configs = {}
+    spectra_storage = {}  # {spec_name: [list of dfs]}
+
+    for res in batch_results:
+        if res is None: continue
+        idx = res['id']
+        
+        # LC
+        # t_sampling, lc
+        df_lc = pd.DataFrame(np.c_[res['t'], res['lc']], columns=['time', 'flux'])
+        df_lc['sim_id'] = idx
+        lcs.append(df_lc)
+
+        # Spots
+        # spot_map columns: init_time, duration, colatitude, longitude, r1, r2, r3
+        # map is array
+        if res['spots'] is not None and len(res['spots']) > 0:
+            df_spots = pd.DataFrame(res['spots'][:, :7], columns=["init_time", "duration(days)",
+                                                                  "colatitude", "longitude@ref_time",
+                                                                  "coeff_rad_1", "coeff_rad_2", "coeff_rad_3"])
+            df_spots['sim_id'] = idx
+            spots.append(df_spots)
+
+        # Config
+        configs[idx] = res['config']
+
+        # Spectra
+        if res['spectra']:
+            for name, (wv, flux) in res['spectra'].items():
+                if name not in spectra_storage:
+                    spectra_storage[name] = []
+                
+                # We can optimize space by not repeating wavelength if it's identical, 
+                # but for simplicity and safety (as it might vary with vsini/doppler) we save it.
+                # However, typically wavelength grid is constant for a given instrument.
+                # Use float32 to save space?
+                df_spec = pd.DataFrame({'wavelength': wv, 'flux': flux})
+                df_spec['sim_id'] = idx
+                spectra_storage[name].append(df_spec)
+
+    # Save LCs
+    if lcs:
+        pd.concat(lcs).to_parquet(f"{dataset_dir}/lc/chunk_{batch_idx}.pqt")
+
+    # Save Spots
+    if spots:
+        pd.concat(spots).to_parquet(f"{dataset_dir}/spots/chunk_{batch_idx}.pqt")
+
+    # Save Configs
+    with open(f"{dataset_dir}/configs/chunk_{batch_idx}.json", 'w') as f:
+        json.dump(configs, f, indent=4)
+
+    # Save Spectra
+    for name, dfs in spectra_storage.items():
+        if dfs:
+            out_dir = f"{dataset_dir}/{name}"
+            os.makedirs(out_dir, exist_ok=True)
+            pd.concat(dfs).to_parquet(f"{out_dir}/chunk_{batch_idx}.pqt")
+    
+    # Clean up
+    del lcs, spots, configs, spectra_storage
+
+
 def simulate_one(models_root,
                  sim_row,
                  sim_dir,
@@ -280,39 +352,15 @@ def simulate_one(models_root,
                  logger,
                  freq_rate=1 / 48,
                  ndays=1000,
-                 save=True,
+                 save=False, # Deprecated local save
                  plot_dir='images',
                  plot_every=np.inf,):
     """
-    Simulate a single star with spots and generate light curves and spectra.
-
-    Parameters:
-    -----------
-    sim_row : pandas.Series
-        Row from the simulation properties DataFrame
-    sim_dir : str
-        Directory to save outputs
-    idx : int
-        Index of the simulation
-    freq_rate : float
-        Sampling frequency in days
-    ndays : int
-        Number of days to simulate
-    wv_array : numpy.ndarray
-        Wavelength array for" spectra
-    save : bool
-        Whether to save outputs to files
-
-    Returns:
-    --------
-    sm : StarSim object
-        The simulated stellar model
-    t_sampling : numpy.ndarray
-        Time array for the light curve
+    Simulate a single star with spots and return data.
     """
-    if f"{idx}.pqt" in os.listdir(f"{sim_dir}/lc"):
-        print(f"{idx}.pqt already exists in {sim_dir}/lc")
-        return None, None
+    # Check if already processed (skip logic would need to check chunks, but for now we assume new run or overwrite)
+    # Skipping the individual file check usage since we are batching.
+    
     try:
         # Create StarSim object and set parameters
         sm = Star(conf_file_path='starsim.conf')
@@ -334,90 +382,81 @@ def simulate_one(models_root,
         spectra = sm.results['spectra']
         wavelength = sm.results['wvp']
 
-        print("\nrange values: ", lc.min(), lc.max(), "num spots: ", len(sm.spot_map))
+        # Construct Config Dict
+        config = {
+            'stellar_params': {
+                'mass': float(sim_row['mass']),
+                'age': float(sim_row['age']),
+                'metallicity': float(sim_row['FeH']),
+                'alpha': float(sim_row['alpha/H']),
+                'Teff': float(sim_row['Teff']),
+                'logg': float(sim_row['logg']),
+                'luminosity': float(sim_row['L']),
+                'radius': float(sim_row['R']),
+                'inclination': float(sim_row['Inclination']),
+                'rotation_period': float(sim_row['Period']),
+                'differential_rotation': float(sim_row['Shear']),
+            },
+            'planet_params': {k:v for k, v in sim_row.items() if 'planet' in k} ,
 
-        # Save config file with all parameters
-        if save:
-            config = {
-                'stellar_params': {
-                    'mass': float(sim_row['mass']),
-                    'age': float(sim_row['age']),
-                    'metallicity': float(sim_row['FeH']),
-                    'alpha': float(sim_row['alpha/H']),
-                    'Teff': float(sim_row['Teff']),
-                    'logg': float(sim_row['logg']),
-                    'luminosity': float(sim_row['L']),
-                    'radius': float(sim_row['R']),
-                    'inclination': float(sim_row['Inclination']),
-                    'rotation_period': float(sim_row['Period']),
-                    'differential_rotation': float(sim_row['Shear']),
-                },
-                'planet_params': {k:v for k, v in sim_row.items() if 'planet' in k} ,
-
-                'activity_params': {
-                    'activity_rate': float(sim_row['Activity Rate']),
-                    'cycle_length': float(sim_row['Cycle Length']),
-                    'cycle_overlap': float(sim_row['Cycle Overlap']),
-                    'spot_min_latitude': float(sim_row['Spot Min']),
-                    'spot_max_latitude': float(sim_row['Spot Max']),
-                    'spot_decay_time': float(sim_row['Decay Time']),
-                    'butterfly_pattern': bool(sim_row['Butterfly']),
-                },
-                'simulation_params': {
-                    'num_days': ndays,
-                    'num_spots': len(sm.spot_map),
-                    'sampling_rate': freq_rate,
-                    'num_points': len(t_sampling),
-                    'evolution_law': 'gaussian',
-                    'wavelength_range': [float(wavelength[0]), float(wavelength[-1])],
-                }
+            'activity_params': {
+                'activity_rate': float(sim_row['Activity Rate']),
+                'cycle_length': float(sim_row['Cycle Length']),
+                'cycle_overlap': float(sim_row['Cycle Overlap']),
+                'spot_min_latitude': float(sim_row['Spot Min']),
+                'spot_max_latitude': float(sim_row['Spot Max']),
+                'spot_decay_time': float(sim_row['Decay Time']),
+                'butterfly_pattern': bool(sim_row['Butterfly']),
+            },
+            'simulation_params': {
+                'num_days': ndays,
+                'num_spots': len(sm.spot_map),
+                'sampling_rate': freq_rate,
+                'num_points': len(t_sampling),
+                'evolution_law': 'gaussian',
+                'wavelength_range': [float(wavelength[0]), float(wavelength[-1])] if hasattr(wavelength, '__len__') and len(wavelength)>0 else [],
             }
+        }
 
-            with open(f"{sim_dir}/configs/{idx}.json", 'w') as f:
-                json.dump(config, f, indent=4)
-
-        # Plot every 100th sample
+        # Plot every Nth sample
         if idx % plot_every == 0:
             fig, axes = plt.subplots(2, 1, figsize=(16, 9))
             axes[0].plot(t_sampling, lc)
             axes[0].set_xlabel('Time [days]')
             axes[0].set_ylabel('Flux')
-            # axes[0].grid(True)
             axes[0].set_title('Light Curve')
 
-            axes[1].plot(wavelength, spectra)
-            axes[1].set_xlabel('Wavelength [Å]')
-            axes[1].set_ylabel('Flux')
-            # axes[1].grid(True)
             axes[1].set_title('Spectra')
+            
+            # Helper to plot spectra
+            spectra_dict = sm.results['spectra']
+            if isinstance(spectra_dict, dict) and len(spectra_dict) > 0:
+                for name, (wv, flx) in spectra_dict.items():
+                    # print("plotting spectra: ", name, ' wv min/max: ', wv.min(), wv.max(), ' flx min/max: ', flx.min(), flx.max())
+                    axes[1].plot(wv, flx, label=name, alpha=0.7)
+                axes[1].legend()
+            else:
+                 if wavelength is not None and spectra is not None:
+                    axes[1].plot(wavelength, spectra)
 
             fig.suptitle(f'Sample {idx}')
-
             plt.tight_layout()
             plt.savefig(f'{plot_dir}/{idx}.png')
             plt.close()
 
-        # Save data files
-        if save:
-            # Save light curve
-            lightcurve = pd.DataFrame(np.c_[t_sampling, lc], columns=["time", "flux"])
-            lightcurve.to_parquet(f"{sim_dir}/lc/{idx}.pqt")
-
-            # Save LAMOST spectrum
-            lamost_df = pd.DataFrame(np.c_[wavelength, spectra], columns=["wavelength", "flux"])
-            lamost_df.to_parquet(f"{sim_dir}/lamost/{idx}.pqt")
-
-            # Save spot map
-            spots_map = pd.DataFrame(np.c_[sm.spot_map[:, :7]], columns=["init_time", "duration(days)",
-                                                                  "colatitude", "longitude@ref_time",
-                                                                  "coeff_rad_1", "coeff_rad_2", "coeff_rad_3"])
-            spots_map.to_parquet(f"{sim_dir}/spots/{idx}.pqt")
-
-        return sm, t_sampling
+        # Return data structure for batch saving
+        return {
+            'id': idx,
+            't': t_sampling,
+            'lc': lc,
+            'spectra': spectra,
+            'spots': sm.spot_map,
+            'config': config
+        }
 
     except Exception as e:
         logger.error(f"Error in simulation {idx}: {str(e)}", exc_info=True)
-        return None, None
+        return None
 
 
 def worker_function(args):
@@ -426,11 +465,11 @@ def worker_function(args):
     try:
         return simulate_one(models_root, row, sim_dir,
                             idx=row_idx, logger=logger, ndays=ndays,
-                            save=True,
+                            save=False, # Saving is now handled in batch
                             plot_dir=plot_dir, plot_every=plot_every)
     except Exception as e:
         logger.error(f"Error in worker {row_idx}: {str(e)}", exc_info=True)
-        return None, None
+        return None
 
 
 def main():
@@ -453,6 +492,8 @@ def main():
                         help='Number of CPU cores to use (default: 1)')
     parser.add_argument('--add_noise', action='store_true',
                         help='Add luminosity-dependent noise to light curves')
+    parser.add_argument('--batch_size', type=int, default=100,
+                        help='Number of simulations per saved file chunk (default: 100)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -462,8 +503,20 @@ def main():
     os.makedirs(args.dataset_dir, exist_ok=True)
     os.makedirs(f"{args.dataset_dir}/lc", exist_ok=True)
     os.makedirs(f"{args.dataset_dir}/spots", exist_ok=True)
-    os.makedirs(f"{args.dataset_dir}/lamost", exist_ok=True)
     os.makedirs(f"{args.dataset_dir}/configs", exist_ok=True)
+    os.makedirs('images', exist_ok=True)
+    
+    # Create spectra directories based on config
+    try:
+        import configparser
+        conf = configparser.ConfigParser()
+        conf.read('starsim.conf')
+        if conf.has_option('general', 'spectra_names'):
+            specs = conf.get('general', 'spectra_names').split(',')
+            for s in specs:
+                os.makedirs(f"{args.dataset_dir}/{s.strip()}", exist_ok=True)
+    except Exception as e:
+        logger.warning(f"Could not parse starsim.conf to create spectra directories: {e}")
     os.makedirs('images', exist_ok=True)
 
     print(f"running create_data.py with {args.num_simulations} simulations and {args.n_cpu} CPU cores")
@@ -518,21 +571,44 @@ def main():
                  for i, row in sims.iterrows()]
 
     # Run simulations
+    batch_buffer = []
+    chunk_counter = 0
+    successful_count = 0
+    
+    # Define result processing function
+    def process_result(res):
+        nonlocal chunk_counter, successful_count
+        if res is not None:
+            batch_buffer.append(res)
+            successful_count += 1
+            
+            if len(batch_buffer) >= args.batch_size:
+                logger.info(f"Saving batch {chunk_counter} with {len(batch_buffer)} samples...")
+                save_batch(batch_buffer, chunk_counter, args.dataset_dir)
+                batch_buffer.clear()
+                chunk_counter += 1
+
     if num_cpus == 1:
-        # Run sequentially without multiprocessing for easier debugging and Ctrl+C support
+        # Run sequentially
         logger.info("Running in serial mode (n_cpu=1) - Ctrl+C enabled")
-        results = []
         for arg in tqdm(args_list, desc="Simulating"):
-            results.append(worker_function(arg))
+            process_result(worker_function(arg))
     else:
         # Run in parallel
         with mp.Pool(processes=num_cpus) as pool:
             try:
-                results = list(tqdm(pool.imap(worker_function, args_list), total=len(args_list), desc="Simulating"))
+                for res in tqdm(pool.imap(worker_function, args_list), total=len(args_list), desc="Simulating"):
+                    process_result(res)
             except KeyboardInterrupt:
                 pool.terminate()
                 pool.join()
                 sys.exit(1)
+
+    # Save remaining items in buffer
+    if batch_buffer:
+        logger.info(f"Saving final batch {chunk_counter} with {len(batch_buffer)} samples...")
+        save_batch(batch_buffer, chunk_counter, args.dataset_dir)
+        batch_buffer.clear()
 
     # Calculate time taken
     end_time = time.time()
@@ -542,8 +618,7 @@ def main():
     logger.info(f"Average time per simulation: {elapsed_time / len(sims):.2f} seconds")
 
     # Count successful simulations
-    successful = sum(1 for r in results if r[0] is not None)
-    logger.info(f"Successfully completed {successful} out of {len(sims)} simulations")
+    logger.info(f"Successfully completed {successful_count} out of {len(sims)} simulations")
 
 
 if __name__ == "__main__":
