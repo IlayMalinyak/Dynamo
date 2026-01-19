@@ -63,7 +63,7 @@ You can generate a full dataset of physically-consistent light curves and spectr
 ### Command-Line Usage
 
 ```bash
-python dataset/create_data.py \
+python -m Dynamo.create_data \
     --models_root /path/to/stellar/models \
     --dataset_dir dataset \
     --plot_dir images \

@@ -244,9 +244,10 @@ class Star:
         print("number of spots: ", len(regions), 'activity: ', self.activity)
         print("number of grid rings: ", self.n_grid_rings)
 
-    def create_lamost_spectra(self, wv_array, ff_sp):
+    def create_synthetic_spectra(self, wv_array, ff_sp):
         """
-        Create synthetic LAMOST-like spectra with proper disk integration and broadening.
+        Create synthetic spectra with proper disk integration and broadening.
+        Generic version of the previous create_lamost_spectra.
         """
         mu, wvp_lc, photo_flux = spectra.interpolate_Phoenix_mu_lc(self,
                                                                    self.temperature_photosphere,
@@ -286,20 +287,20 @@ class Star:
         # Apply stellar rotation broadening FIRST
         combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, self.vsini)
 
-        # Apply instrumental broadening (LAMOST resolution)
-        R_lamost = 1800
+        # Apply instrumental broadening (Generic resolution)
+        R_instrument = self.spectra_resolution
         c = 299792.458  # km/s
-        sigma_instrumental = c / R_lamost  # ~167 km/s
+        sigma_instrumental = c / R_instrument
         combined_spectrum = spectra.apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
 
         # Apply instrument sensitivity
         if self.spectra_filter_name != 'None':
-            lamost_sensitivity = spectra.interpolate_filter(self, self.spectra_filter_name)
+            sensitivity = spectra.interpolate_filter(self, self.spectra_filter_name)
             # CORRECTED: Proper sensitivity application
-            combined_spectrum = combined_spectrum * lamost_sensitivity(wv_array)
+            combined_spectrum = combined_spectrum * sensitivity(wv_array)
         else:
-            lamost_sensitivity_values = self.create_synthetic_lamost_sensitivity(wv_array)
-            combined_spectrum = combined_spectrum * lamost_sensitivity_values
+            sensitivity_values = spectra.create_default_sensitivity(wv_array)
+            combined_spectrum = combined_spectrum * sensitivity_values
 
         base_snr = self.cdpp * 2
 
@@ -322,26 +323,9 @@ class Star:
 
         return combined_spectrum_with_noise, wvp_lc
 
-    def create_synthetic_lamost_sensitivity(self, wv_array):
-        """
-        Create a synthetic LAMOST sensitivity curve if no filter is provided.
-        """
-        # Simple model: peak around 5500Å, declining toward red/blue
-        central_wl = 5500.0  # Angstroms
-        width = 2000.0  # Angstroms
 
-        sensitivity = np.exp(-0.5 * ((wv_array - central_wl) / width) ** 2)
 
-        # Add some realistic features
-        # Red cutoff around 9000Å
-        red_cutoff = 1.0 / (1.0 + np.exp((wv_array - 8500) / 200))
-        # Blue cutoff around 3800Å
-        blue_cutoff = 1.0 / (1.0 + np.exp((3800 - wv_array) / 200))
-
-        sensitivity = sensitivity * red_cutoff * blue_cutoff
-        return sensitivity
-
-    def compute_forward(self, t=None, wv_array=None):
+    def compute_forward(self, t=None):
         print(f"\ncomputing forward with: {len(self.spot_map)} spots and {int(self.simulate_planet)} planets")
         self.inclination = np.deg2rad(self.inclination)
         self.spot_T_contrast = 200
@@ -359,22 +343,22 @@ class Star:
         Ngrid_in_ring, cos_centers, proj_area, phi, theta, vec_grid = self.get_theta_phi()
 
         sini, wvp, photo_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
-            self, self.temperature_photosphere, self.logg, self.feh, wv_array=wv_array, plot=True
+            self, self.temperature_photosphere, self.logg, self.feh, wv_array=None
         )
         sini, wvp, spot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
-            self, self.temperature_spot, self.logg, self.feh, wv_array=wv_array
+            self, self.temperature_spot, self.logg, self.feh, wv_array=None
         )
         # For LIGHT CURVES: Apply photometric filter and compute integrated flux
         f_filt_lc = spectra.interpolate_filter(self, self.filter_name)
 
         brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(
             self, Ngrid_in_ring, sini, cos_centers, proj_area,
-            photo_flux, f_filt_lc, wvp, self.vsini
+            photo_flux, f_filt_lc, wvp, vsini=0.0
         )
 
         brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(
             self, Ngrid_in_ring, sini, cos_centers, proj_area,
-            spot_flux, f_filt_lc, wvp, self.vsini
+            spot_flux, f_filt_lc, wvp, vsini=0.0
         )
 
         brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp  # if there are no faculae
@@ -392,10 +376,20 @@ class Star:
 
         # For SPECTRA: Use the SAME Phoenix models, just with spectroscopic filter
         # No need to recalculate Phoenix models!
-        if wv_array is not None or hasattr(self, 'spectra_filter_name'):
-            # Create spectra using the already-computed Phoenix models
+        if hasattr(self, 'spectra_filter_name'):
+            # Pick a random time point for the spectral snapshot (simulate a single observation)
+            # We want to capture the star at a specific rotational phase
+            n_times = len(ff_sp)
+            idx_spec = np.random.randint(0, n_times)
+            ff_sp_snapshot = ff_sp[idx_spec]
+            
+            # Store the specific time of spectrum for reference
+            self.results['spectra_time'] = self.obs_times[idx_spec] if self.obs_times is not None else idx_spec
+            self.results['spectra_ff_sp'] = ff_sp_snapshot
+
+            # Create spectra using the SNAPSHOT filling factor
             spectra_flux, wvp_spec = spectra.create_observed_spectra(
-                self, wvp, photo_flux, spot_flux, sini, ff_sp,
+                self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
                 spectra_filter_name=self.spectra_filter_name
             )
         else:

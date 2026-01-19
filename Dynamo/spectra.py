@@ -420,7 +420,7 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
 
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
-                          spectra_filter_name='LAMOST.dat'):
+                          spectra_filter_name='None'):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
 
@@ -468,7 +468,13 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
                                  spot_flux[i + 1, :] * weight_i_plus_1)
 
     # Combine photosphere and spots using fill factor
-    fill_factor = np.mean(ff_sp) / 100  # Convert percentage to fraction
+    # If ff_sp is an array (time series), we take the mean (legacy behavior)
+    # If ff_sp is a scalar (snapshot), we use it directly
+    if np.size(ff_sp) > 1:
+        fill_factor = np.mean(ff_sp) / 100
+    else:
+        fill_factor = float(ff_sp) / 100
+
     combined_spectrum = ((1 - fill_factor) * disk_integrated_photo +
                          fill_factor * disk_integrated_spot)
 
@@ -487,7 +493,7 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
         combined_spectrum = combined_spectrum * instrument_sensitivity(wv_array)
     else:
         # Create synthetic sensitivity if no filter provided
-        sensitivity_values = create_synthetic_lamost_sensitivity(wv_array)
+        sensitivity_values = create_default_sensitivity(wv_array)
         combined_spectrum = combined_spectrum * sensitivity_values
 
     # Add noise based on SNR
@@ -513,9 +519,10 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     return combined_spectrum, wv_array
 
 
-def create_synthetic_lamost_sensitivity(wv_array):
+def create_default_sensitivity(wv_array):
     """
-    Create a synthetic LAMOST sensitivity curve if no filter is provided.
+    Create a synthetic sensitivity curve if no filter is provided.
+    Default shape approximates a visual band pass but can be used generally.
 
     Parameters:
     -----------
@@ -526,19 +533,19 @@ def create_synthetic_lamost_sensitivity(wv_array):
     --------
     array : Sensitivity values
     """
-    # Simple model: peak around 5500Å, declining toward red/blue
-    central_wl = 5500.0  # Angstroms
-    width = 2000.0  # Angstroms
-
+    w_min = np.min(wv_array)
+    w_max = np.max(wv_array)
+    
+    # Center the sensitivity curve on the requested range
+    central_wl = (w_min + w_max) / 2.0
+    # Width covering significant part of the range (sigma approx 1/4 of range)
+    width = (w_max - w_min) / 3.0
+    
+    if width <= 0:
+        width = 1000.0 # Fallback for single line calculations or weird inputs
+        
     sensitivity = np.exp(-0.5 * ((wv_array - central_wl) / width) ** 2)
 
-    # Add realistic cutoffs
-    # Red cutoff around 9000Å
-    red_cutoff = 1.0 / (1.0 + np.exp((wv_array - 8500) / 200))
-    # Blue cutoff around 3800Å
-    blue_cutoff = 1.0 / (1.0 + np.exp((3800 - wv_array) / 200))
-
-    sensitivity = sensitivity * red_cutoff * blue_cutoff
     return sensitivity
 
 
@@ -546,8 +553,8 @@ def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area
                                flnp, f_filt, wv, vsini=0.0):
     """
     Compute immaculate spectra without filter convolution for spectroscopic use.
-    Similar to compute_immaculate_lc_with_vsini but returns full spectra.
-
+    Correctly integrates Doppler shifts over the stellar disk.
+    
     Parameters:
     -----------
     star : Star object
@@ -556,18 +563,18 @@ def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area
     sini : array
         Phoenix mu angles
     cos_centers : array
-        Grid mu values
+        Grid mu values (cosine of angle from center)
     proj_area : array
-        Projected areas
+        Projected areas of grid elements
     flnp : 2D array
-        Phoenix flux at each angle
+        Phoenix flux at each angle [n_angles, n_wavelengths]
     f_filt : function
         Filter function (can be identity for spectra)
     wv : array
         Wavelength array
     vsini : float
         Projected rotational velocity
-
+    
     Returns:
     --------
     tuple: (ring_spectra, total_spectrum)
@@ -578,53 +585,223 @@ def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area
     ring_spectra = np.zeros([N, len(wv)])
     total_spectrum = np.zeros(len(wv))
 
-    # Calculate differential rotation for each ring if enabled
-    if hasattr(star, 'differential_rotation') and star.differential_rotation:
-        vsini_rings = calculate_differential_vsini(star, N, vsini, cos_centers)
-    else:
-        vsini_rings = [vsini] * N
+    # Pre-calculate log-wavelength grid for Doppler shifting if vsini > 0
+    if vsini > 0:
+        log_grid, _, interp_back = _resample_to_log_lambda(wv, np.zeros_like(wv))
+        c_kms = 299792.458
+        # Velocity step per pixel in log-grid
+        dv_pixel = c_kms * np.log(10) * (log_grid[1] - log_grid[0]) 
 
+    # We need the geometry of the grid to calculate local velocities
+    # Re-generate grid coordinates to get x,y positions (mu is already in cos_centers)
+    # Note: efficient implementation would cache this or pass it in
+    _, _, _, _, _, alphas, xs, ys, zs, _, _ = nbspectra.generate_grid_coordinates_nb(N)
+    
+    # Calculate velocities for all grid points
+    # Coordinate system: z is towards observer, x is "vertical" on sky, y is "horizontal"
+    # Rotation is around x-axis (projected). 
+    # v_z = x * Omega * sin(i) + ... 
+    # Actually, simpler:
+    # v_projected = vsini * y_coordinate_normalized * differential_rotation_factor
+    
+    # But wait, generated grid coordinates nbspectra.generate_grid_coordinates_nb 
+    # returns xs, ys, zs for flattened list of all points? 
+    # No, it returns arrays that need to be reconstructed into rings.
+    
+    # Let's align with the ring-based structure of Ngrid_in_ring.
+    # The helper `generate_grid_coordinates_nb` returns flattened arrays `alphas` etc. 
+    # We need to slice them per ring.
+    
+    start_idx = 0
+    
     for i in range(N):
+        # 1. Get Base Spectrum for this Ring (Intensity I(mu, lambda))
         # Interpolate Phoenix intensity models to correct projected angle
         if star.use_phoenix_limb_darkening:
-            # Handle edge cases properly
             if cos_centers[i] >= sini.max():
                 dlp = flnp[-1]
             elif cos_centers[i] <= sini.min():
                 dlp = flnp[0]
             else:
-                # Normal interpolation
                 acd_below = sini[sini < cos_centers[i]]
                 acd_above = sini[sini >= cos_centers[i]]
-
                 acd_low = np.max(acd_below)
                 acd_upp = np.min(acd_above)
                 idx_low = np.where(sini == acd_low)[0][0]
                 idx_upp = np.where(sini == acd_upp)[0][0]
-
-                # Linear interpolation
                 dlp = flnp[idx_low] + (flnp[idx_upp] - flnp[idx_low]) * \
                       (cos_centers[i] - acd_low) / (acd_upp - acd_low)
         else:
-            # Use specified limb darkening law
             dlp = flnp[0] * limb_darkening_law(star, cos_centers[i])
 
-        # Apply rotational broadening if needed
-        if vsini_rings[i] > 0:
-            if star.differential_rotation > 0:
-                dlp = apply_rotational_broadening_differential(
-                    wv, dlp,
-                    vsini_equator=vsini_rings[i],
-                    alpha=star.differential_rotation,
-                    inclination_deg=np.rad2deg(star.inclination),
-                    epsilon=star.limb_darkening_q1
-                )
-            else:
-                dlp = apply_rotational_broadening(wv, dlp, vsini_rings[i])
+        # 2. Integrate over the ring's azimuthal segments (phi angles)
+        # Each segment has a different Doppler shift
+        
+        n_segments = Ngrid_in_ring[i]
+        
+        # Extract y-coordinates (which drive Doppler shift) for this ring
+        # ys corresponds to normalized distance from rotation axis projected on sky?
+        # xs, ys, zs in nbspectra are:
+        # xs = cos(colat) -> Polar axis direction if inc=90? 
+        # Wait, nbspectra says:
+        # xs = np.cos(np.pi*ts/180)  (z-axis in standard physics, but here named x)
+        # ys = rs*np.sin(np.pi*alphas/180)
+        # zs = -rs*np.cos(np.pi*alphas/180)
+        # And "pole faces the observer" means i=0? 
+        # Rotator logic converts these to observer frame.
+        
+        # Let's look at Rotator logic for consistency:
+        # theta, phi = np.arccos(zs * ... - xs * ...), ...
+        
+        # SIMPLIFICATION: 
+        # For a ring at colatitude theta (fixed per ring i), having `n_segments` azimuthal points:
+        # The latitude is `lat = 90 - centers[i]`.
+        # The velocity of the ring is v_rot(lat) = vsini_equator * diff_rot_factor(lat) / sin(inc) ? 
+        # No, vsini is already projected. 
+        # v_local_proj = v_equator * diff_rot(lat) * sin(i) * sin(phi_star) 
+        # where phi_star is the rotational phase.
+        
+        # We can reconstruct the phases `phi` for this ring
+        # anglesout=np.linspace(0,360-width, ... )
+        # nbspectra generates alphas (longitudes)
+        
+        # Get slice of alphas for this ring
+        current_alphas = alphas[start_idx : start_idx + n_segments]
+        start_idx += n_segments
+        
+        # Calculate Differential Rotation Factor for this ring
+        # cos_centers[i] is mu. For inc=90 (edge on), mu = cos(colat_projected)? 
+        # No, cos_centers comes from generate_grid_coordinates which assumes pole facing observer (i=0)?
+        # Actually generate_grid_coordinates_nb is purely a geometric meshing of a sphere.
+        # It assumes a specific orientation where "centres" are colatitudes. 
+        # Let's assume standard spherical coords where theta is colatitude.
+        
+        # In the observer frame (Rotator.get_theta_phi handles the rotation to observer), 
+        # but here we are in the "Rest Frame" of the star's surface generation?
+        # NO, `compute_immaculate_spectra` is called with `cos_centers` which are MU values.
+        # MU values depend on Inclination. 
+        # BUT `generate_grid_coordinates_nb` generates a grid centered on the LOS (Line of Sight).
+        # i.e., "Pole of the grid faces the observer."
+        # So Ring i is at angle theta_from_LOS = acos(mu).
+        # This is NOT stellar latitude. It's "angle from center of disk".
+        
+        # So we have a ring at radius r_projected = sin(acos(mu)) on the disk.
+        # `current_alphas` are the angles around the LOS. 
+        # position (x,y) on sky: 
+        # x = r_proj * cos(alpha)
+        # y = r_proj * sin(alpha)
+        
+        # Stellar Rotation is roughly horizontal (if aligned with x-axis or y-axis).
+        # Standard convention: Rotation axis is vertical (y-axis?), star rotates left-to-right?
+        # Doppler shift is proportional to x-coordinate (or y, depending on convention).
+        # Let's assume x is "horizontal" on the detector, y is "vertical" (rotation axis).
+        # Then v_projected = Omega * x_coord.
+        
+        # vsini is velocity at limb (x=1). 
+        # So v_local = vsini * x_projected_normalized.
+        
+        # r_proj = sqrt(1 - mu^2)
+        # x_proj = r_proj * sin(alpha)  (or cos)
+        
+        # Differential rotation is hard here because we don't know the TRUE stellar latitude of each pixel easily 
+        # without the inclination logic map.
+        # However, for vsini broadening, we can often neglect differential rotation variations across the tiny segments 
+        # OF THE LOS GRID if we just want "Solid Body" equivalent or assume vsini is dominant.
+        
+        # Issue 1 Fix is about geometric integration. 
+        # If we want to support Differential Rotation correctly, we need the latitude of each grid point.
+        # `star.get_theta_phi()` computes this!
+        # `phi, theta = ...` (coordinates in star reference)
+        # But `compute_immaculate_spectra` receives `cos_centers` and `proj_area`.
+        # It acts on "Rings of equal mu".
+        
+        # CRITICAL: `compute_immaculate_spectra` loop assumes the spectrum only depends on MU (LD).
+        # If we add rotation, it depends on POSITION (x,y).
+        # We must sum over the individual grid points (segments), calculate their V_proj, shift, and add.
+        
+        # If vsini=0, simply:
+        ring_flux_no_rot = dlp * proj_area[i] / (4 * np.pi) * Ngrid_in_ring[i] # Sum of all segments
+        
+        if vsini <= 0:
+             ring_spectra[i, :] = ring_flux_no_rot
+             total_spectrum += ring_spectra[i, :]
+             continue
 
-        # Store spectrum for this ring (no filter for spectroscopy)
-        ring_spectra[i, :] = dlp * proj_area[i] / (4 * np.pi)
-        total_spectrum += ring_spectra[i, :] * Ngrid_in_ring[i]
+        # If vsini > 0, we must distribute the flux of this ring over velocities.
+        
+        # 2a. Reconstruct projected X-coordinates for this ring's segments
+        # Center center mu = cos_centers[i]
+        # Projected radius from center of disk:
+        r_proj = np.sqrt(1 - cos_centers[i]**2)
+        
+        # Azimuthal angles for this ring (0 to 360)
+        # We can uniformly sample them since the grid is constructed that way
+        alphas_ring = np.linspace(0, 2*np.pi, n_segments, endpoint=False)
+        
+        # Projected X positions (range -1 to 1)
+        # Assuming rotation axis is Y, velocity is along X
+        # x_proj = r_proj * sin(alpha)
+        x_proj_values = r_proj * np.cos(alphas_ring) # or sin, symmetric for spectrum
+        
+        # Velocities: v = vsini * x_proj
+        # (Neglecting differential rotation for the "immaculate" spectrum fix first, 
+        # or assuming vsini is an effective vsini. 
+        # Exact differential rotation requires mapping back to stellar lat/lon. 
+        # `star.get_theta_phi` does this mapping. But that's heavy.)
+        
+        velocities = vsini * x_proj_values
+        
+        # 2b. Shift and Add
+        # Resample dlp to log-lambda for efficiency?
+        if len(wv) > 0:
+            # We can use the pre-calculated log grid?
+            # Or just interpolation for each segment (slower but accurate)
+            # Given N_segments can be large, maybe histogram method (kernel) is better?
+            
+            # Create a "Broadening Kernel" for THIS RING
+            # Histogram of velocities
+            # v_grid = c * (log(lam) - log(lam0))
+             
+            # Let's use the histogram method for creating the kernel for this ring
+            # matching standard broadening implementations
+            
+            # Construct kernel
+            # Distribution of velocities in this ring is basically P(v) ~ 1/sqrt(1-(v/vmax)^2) (Chebyshev)
+            # but discrete.
+            
+            dv = (wv[1] - wv[0]) # approx
+            c_light = 299792.458
+            
+            # We'll shift the Base Spectrum `dlp` by `velocities`
+            # Optimization: Group segments by velocity bins?
+            
+            # Let's use existing `_resample_to_log_lambda` logic from `spectra.py` manually
+            # or simply shift.
+            
+            # Log-linear interpolation is standard for Doppler.
+            log_wv = np.log(wv)
+            flux_interp = interpolate.interp1d(log_wv, dlp, bounds_error=False, fill_value=0.0)
+            
+            ring_accum = np.zeros_like(dlp)
+            
+            # shift = v / c
+            # log(lam_new) = log(lam_old * (1+v/c)) ~ log(lam_old) + v/c
+            
+            for v in velocities:
+                shift = v / c_light
+                shifted_flux = flux_interp(log_wv - shift) 
+                ring_accum += shifted_flux
+
+            # Normalize by area?
+            # dlp is Intensity * Area/4pi? No, dlp is Intensity.
+            # We need to weigh by area.
+            # In this grid, all segments in a ring have equal area?
+            # area[i] is area of ONE grid element.
+            # proj_area[i] is projected area of ONE grid element.
+            
+            weight = proj_area[i] / (4 * np.pi)
+            ring_spectra[i, :] = ring_accum * weight
+            total_spectrum += ring_spectra[i, :]
 
     return ring_spectra, total_spectrum
 

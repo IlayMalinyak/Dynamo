@@ -28,10 +28,6 @@ M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
 
-DATASET_DIR = r'C:\Users\Ilay\projects\simulations\dataset_clean'
-MODELS_ROOT = r'C:\Users\Ilay\projects\simulations\starsim\starsim'
-
-os.makedirs(DATASET_DIR, exist_ok=True)
 
 def generate_theta_with_linear_decay(ar, N):
     """
@@ -232,7 +228,6 @@ def simulate_one(models_root,
                  logger,
                  freq_rate=1 / 48,
                  ndays=1000,
-                 wv_array=None,
                  save=True,
                  plot_dir='images',
                  plot_every=np.inf,):
@@ -280,7 +275,7 @@ def simulate_one(models_root,
         t_sampling = np.linspace(0, ndays, int(ndays / freq_rate))
 
         # Compute forward model
-        sm.compute_forward(t=t_sampling, wv_array=wv_array)
+        sm.compute_forward(t=t_sampling)
 
         # Extract results
         lc = sm.results['lc']
@@ -375,11 +370,11 @@ def simulate_one(models_root,
 
 def worker_function(args):
     """Worker function for multiprocessing."""
-    models_root, row_idx, row, sim_dir, logger, ndays, wv_array, plot_dir, plot_every = args
+    models_root, row_idx, row, sim_dir, logger, ndays, plot_dir, plot_every = args
     try:
         return simulate_one(models_root, row, sim_dir,
                             idx=row_idx, logger=logger, ndays=ndays,
-                            wv_array=wv_array, save=True,
+                            save=True,
                             plot_dir=plot_dir, plot_every=plot_every)
     except Exception as e:
         logger.error(f"Error in worker {row_idx}: {str(e)}", exc_info=True)
@@ -392,7 +387,6 @@ def main():
     parser = argparse.ArgumentParser(description='Run stellar spot simulation.')
     parser.add_argument('--models_root', type=str, default=None,
                         help='Root directory containing stellar models (default: ~/.dynamo')
-    parser.add_argument('--wv_array', type=str, default=None,)
     parser.add_argument('--dataset_dir', type=str, default='dataset',
                         help='Directory to store simulation outputs (default: dataset)')
     parser.add_argument('--plot_dir', type=str, default='images',
@@ -456,13 +450,6 @@ def main():
     else:
         base_dir = Path(args.models_root)
 
-    # Load wavelength array for LAMOST spectra
-    if args.wv_array is not None:
-        wv_array = np.load(f'{str(base_dir)}/wavelength/{args.wv_array}')
-    else:
-        wv_array = None
-
-
     # Start timing
     start_time = time.time()
 
@@ -472,7 +459,7 @@ def main():
 
     # Prepare arguments for multiprocessing
     args_list = [(base_dir, i, row, args.dataset_dir, logger, args.ndays,
-                  wv_array, args.plot_dir, args.plot_every,)
+                  args.plot_dir, args.plot_every,)
                  for i, row in sims.iterrows()]
 
     # Run simulations in parallel

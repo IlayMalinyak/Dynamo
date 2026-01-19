@@ -270,6 +270,10 @@ class SpotsGenerator(object):
         bsiz = np.sqrt(self.max_area / fact)
 
         # Process each spot
+        # Keep track of active regions that can spawn potential "echoes" (correlated spots)
+        # Store tuples: (nday, lat, lon, k)
+        active_parents = []
+        
         for spot_idx, nday in enumerate(emergence_times):
             nday = int(nday)
 
@@ -289,40 +293,84 @@ class SpotsGenerator(object):
                 break
 
             if not cycle_found:
-                # Default to first cycle if no valid cycle found
                 nc = 0
                 phase = 0.5
 
-            # Determine latitude distribution
-            if butterfly:
-                latavg, latrms = exponential_latitudes(min_lat, max_lat, phase)
-            else:
-                latavg, latrms = random_latitudes(min_lat, max_lat)
-
-            # Sample latitude based on distribution
-            jlat = np.arange(self.nlat, dtype=int)
-            lat_centers = l1 + dlat * (0.5 + jlat)
-            lat_probs = np.exp(-((lat_centers - latavg) / latrms) ** 2)
-            lat_probs = lat_probs / lat_probs.sum()
-
-            # Choose latitude bin
-            j = np.random.choice(jlat, p=lat_probs)
-            lat = l1 + dlat * (np.random.uniform() + j)
-
-            # Choose hemisphere (North or South)
-            k = np.random.choice([0, 1])
-
-            # Choose longitude uniformly
-            lon = np.random.uniform(0, 360)
-
-            # Choose bipole size based on power law distribution
-            # Sample from power law: P(A) ~ A^(-2)
+            # Choose bipole size first to know if it will be a parent
             size_probs = fact / fact.sum()
             nb = np.random.choice(self.nbins, p=size_probs)
             bsize = bsiz[nb]
+            
+            # Correlated Emergence Logic
+            is_correlated = False
+            
+            # Find eligible parents: emerged between tau1 and tau2 days ago
+            valid_parents = [p for p in active_parents if (nday - p[0] >= self.tau1) and (nday - p[0] <= self.tau2)]
+            
+            # 2026-01-19: Added logic for active longitudes/nesting
+            if len(valid_parents) > 0 and np.random.uniform() < self.prob_corr:
+                # Spawn near a parent
+                parent = valid_parents[np.random.randint(len(valid_parents))]
+                p_nday, p_lat, p_lon, p_k = parent
+                
+                # Inherit hemisphere
+                k = p_k
+                
+                # Scatter in position (roughly 5-10 degrees scatter?)
+                # 10 degrees ~ 0.17 rad approx? Let's use 5 deg scatter for nesting.
+                sigma_scatter = 5.0
+                
+                # Latitude scatter
+                lat = p_lat + np.random.normal(0, sigma_scatter)
+                # Clamp latitude
+                if butterfly:
+                    l1 = max(min_lat - 7, 0)
+                    l2 = min(max_lat + 7, 90)
+                else:
+                    l1, l2 = min_lat, max_lat
+                lat = np.clip(lat, l1, l2)
+                
+                # Longitude scatter
+                lon = p_lon + np.random.normal(0, sigma_scatter)
+                lon = lon % 360.0
+                
+                is_correlated = True
+            
+            if not is_correlated:
+                # Standard independent emergence (Random)
+                
+                # Determine latitude distribution
+                if butterfly:
+                    latavg, latrms = exponential_latitudes(min_lat, max_lat, phase)
+                else:
+                    latavg, latrms = random_latitudes(min_lat, max_lat)
+
+                # Sample latitude based on distribution
+                jlat = np.arange(self.nlat, dtype=int)
+                lat_centers = l1 + dlat * (0.5 + jlat)
+                lat_probs = np.exp(-((lat_centers - latavg) / latrms) ** 2)
+                lat_probs = lat_probs / lat_probs.sum()
+
+                # Choose latitude bin
+                j = np.random.choice(jlat, p=lat_probs)
+                lat = l1 + dlat * (np.random.uniform() + j)
+
+                # Choose hemisphere (North or South)
+                k = np.random.choice([0, 1])
+
+                # Choose longitude uniformly
+                lon = np.random.uniform(0, 360)
 
             # Add the region
             self._add_region_cycle(nday, nc, lat, lon, k, bsize)
+            
+            # If this new spot is large (nb=0, largest bin), add it to potential parents
+            # Also clean up old parents to keep list small? (Optional optimization)
+            if nb == 0:
+                active_parents.append((nday, lat, lon, k))
+            
+            # Cleanup old parents (older than tau2)
+            active_parents = [p for p in active_parents if (nday - p[0] <= self.tau2)]
 
         return self.regions
 
