@@ -895,7 +895,7 @@ def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='line
     lowg = list_grav[list_grav <= grav].max() if any(list_grav <= grav) else list_grav.min()
     uppg = list_grav[list_grav >= grav].min() if any(list_grav >= grav) else list_grav.max()
 
-    print(f"Interpolating between T=[{lowT}, {uppT}], log g=[{lowg}, {uppg}]")
+    # print(f"Interpolating between T=[{lowT}, {uppT}], log g=[{lowg}, {uppg}]")
 
     # Generate filenames for the four corner points
     def make_filename(T, g):
@@ -1157,10 +1157,10 @@ def interpolate_Phoenix_mu_lc_with_metallicity(star, temp, grav, feh, wv_array=N
             'metallicities': list_feh
         }
 
-        print(f"Available parameter ranges:")
-        print(f"  Temperature: {list_temp.min():.0f} - {list_temp.max():.0f} K")
-        print(f"  log(g): {list_grav.min():.2f} - {list_grav.max():.2f}")
-        print(f"  [Fe/H]: {list_feh.min():.2f} - {list_feh.max():.2f}")
+        # print(f"Available parameter ranges:")
+        # print(f"  Temperature: {list_temp.min():.0f} - {list_temp.max():.0f} K")
+        # print(f"  log(g): {list_grav.min():.2f} - {list_grav.max():.2f}")
+        # print(f"  [Fe/H]: {list_feh.min():.2f} - {list_feh.max():.2f}")
     else:
         files = star._phoenix_mu_cache_with_feh['files']
         list_temp = star._phoenix_mu_cache_with_feh['temperatures']
@@ -1199,8 +1199,8 @@ def interpolate_Phoenix_mu_lc_with_metallicity(star, temp, grav, feh, wv_array=N
     lowfeh = list_feh[list_feh <= feh].max() if any(list_feh <= feh) else list_feh.min()
     uppfeh = list_feh[list_feh >= feh].min() if any(list_feh >= feh) else list_feh.max()
 
-    print(f"Interpolating between:")
-    print(f"  T=[{lowT:.0f}, {uppT:.0f}], log(g)=[{lowg:.2f}, {uppg:.2f}], [Fe/H]=[{lowfeh:.2f}, {uppfeh:.2f}]")
+    # print(f"Interpolating between:")
+    # print(f"  T=[{lowT:.0f}, {uppT:.0f}], log(g)=[{lowg:.2f}, {uppg:.2f}], [Fe/H]=[{lowfeh:.2f}, {uppfeh:.2f}]")
 
     # Generate filenames for the eight corner points of the cube
     def make_filename(T, g, feh_val):
@@ -1233,7 +1233,7 @@ def interpolate_Phoenix_mu_lc_with_metallicity(star, temp, grav, feh, wv_array=N
         sys.exit(f'Error: No required files found for interpolation')
 
     if missing_files:
-        print(f'Warning: {len(missing_files)} missing files. Using fallback strategy.')
+        # print(f'Warning: {len(missing_files)} missing files. Using fallback strategy.')
         # Implement fallback strategy similar to original but for 3D
         fallback_map = create_3d_fallback_strategy(
             available_files, model_files, list_temp, list_grav, list_feh,
