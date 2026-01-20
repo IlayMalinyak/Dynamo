@@ -448,7 +448,7 @@ class Star:
                 # Create spectra using the SNAPSHOT filling factor
                 spectra_flux, wvp_spec = spectra.create_observed_spectra(
                     self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
-                    spectra_filter_name=filt_name
+                    spectra_filter_name=filt_name, wavelength_range=wv_range
                 )
                 
                 # Cut wavelength range if specified

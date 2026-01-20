@@ -420,7 +420,7 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
 
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
-                          spectra_filter_name='None'):
+                          spectra_filter_name='None', wavelength_range=None):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
 
@@ -440,6 +440,8 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
         Spot filling factor (as percentage)
     spectra_filter_name : str
         Name of spectral response filter file
+    wavelength_range : tuple, optional
+        (min_wavelength, max_wavelength) to define sensitivity range
 
     Returns:
     --------
@@ -488,12 +490,12 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
 
     # Apply instrument sensitivity/filter
-    if spectra_filter_name != 'None':
+    if spectra_filter_name is not None and spectra_filter_name != 'None':
         instrument_sensitivity = interpolate_filter(star, spectra_filter_name)
         combined_spectrum = combined_spectrum * instrument_sensitivity(wv_array)
     else:
         # Create synthetic sensitivity if no filter provided
-        sensitivity_values = create_default_sensitivity(wv_array)
+        sensitivity_values = create_default_sensitivity(wv_array, wavelength_range)
         combined_spectrum = combined_spectrum * sensitivity_values
 
     # Add noise based on SNR
@@ -519,7 +521,7 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     return combined_spectrum, wv_array
 
 
-def create_default_sensitivity(wv_array):
+def create_default_sensitivity(wv_array, wavelength_range=None):
     """
     Create a synthetic sensitivity curve if no filter is provided.
     Default shape approximates a visual band pass but can be used generally.
@@ -528,13 +530,18 @@ def create_default_sensitivity(wv_array):
     -----------
     wv_array : array
         Wavelength array in Angstroms
+    wavelength_range : tuple, optional
+        (min, max) wavelength for the sensitivity curve
 
     Returns:
     --------
     array : Sensitivity values
     """
-    w_min = np.min(wv_array)
-    w_max = np.max(wv_array)
+    if wavelength_range is not None:
+        w_min, w_max = wavelength_range
+    else:
+        w_min = np.min(wv_array)
+        w_max = np.max(wv_array)
     
     # Center the sensitivity curve on the requested range
     central_wl = (w_min + w_max) / 2.0
