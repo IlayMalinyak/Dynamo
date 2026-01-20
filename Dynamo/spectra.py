@@ -420,7 +420,7 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
 
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
-                          spectra_filter_name='None', wavelength_range=None):
+                          spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, ff_planet=0.0):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
 
@@ -442,6 +442,10 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
         Name of spectral response filter file
     wavelength_range : tuple, optional
         (min_wavelength, max_wavelength) to define sensitivity range
+    instrument_resolution : float, optional
+        Instrumental resolution (R). If None, uses star.spectra_resolution.
+    ff_planet : float, optional
+        Planet filling factor (fraction of disk blocked by planet). Default 0.
 
     Returns:
     --------
@@ -477,20 +481,26 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     else:
         fill_factor = float(ff_sp) / 100
 
-    combined_spectrum = ((1 - fill_factor) * disk_integrated_photo +
+    combined_spectrum = ((1 - fill_factor - ff_planet) * disk_integrated_photo +
                          fill_factor * disk_integrated_spot)
 
     # Apply stellar rotational broadening
     if star.vsini > 0:
         combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, star.vsini)
 
-    # Apply instrumental broadening (LAMOST resolution)
-    R = star.spectra_resolution
-    sigma_instrumental = c / R  # ~167 km/s
+    # Apply instrumental broadening
+    if instrument_resolution is None:
+        R = star.spectra_resolution
+    else:
+        R = instrument_resolution
+        
+    sigma_instrumental = c / R
     combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
 
     # Apply instrument sensitivity/filter
-    if spectra_filter_name is not None and spectra_filter_name != 'None':
+    if spectra_filter_name == 'Raw':
+        pass # Do not apply any sensitivity curve
+    elif spectra_filter_name is not None and spectra_filter_name != 'None':
         instrument_sensitivity = interpolate_filter(star, spectra_filter_name)
         combined_spectrum = combined_spectrum * instrument_sensitivity(wv_array)
     else:

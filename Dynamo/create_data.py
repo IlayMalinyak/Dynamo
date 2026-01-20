@@ -420,7 +420,7 @@ def simulate_one(models_root,
 
         # Plot every Nth sample
         if idx % plot_every == 0:
-            fig, axes = plt.subplots(2, 1, figsize=(16, 9))
+            fig, axes = plt.subplots(2, 1, figsize=(22, 12))
             axes[0].plot(t_sampling, lc)
             axes[0].set_xlabel('Time [days]')
             axes[0].set_ylabel('Flux')
@@ -439,7 +439,9 @@ def simulate_one(models_root,
                  if wavelength is not None and spectra is not None:
                     axes[1].plot(wavelength, spectra)
 
-            fig.suptitle(f'Sample {idx}')
+            teff = float(sim_row['Teff'])
+            per = float(sim_row['Period'])
+            fig.suptitle(f'Sample {idx} | Teff: {teff:.0f} K | Period: {per:.2f} d')
             plt.tight_layout()
             plt.savefig(f'{plot_dir}/{idx}.png')
             plt.close()

@@ -432,23 +432,25 @@ class Star:
         if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
             # Pick a random time point for the spectral snapshot (simulate a single observation)
             # We want to capture the star at a specific rotational phase
+            # Pick a random time point for the spectral snapshot
             n_times = len(ff_sp)
             idx_spec = np.random.randint(0, n_times)
             ff_sp_snapshot = ff_sp[idx_spec]
-            
+            ff_pl_snapshot = ff_pl[idx_spec] if ff_pl is not None else 0.0
+
             # Store the specific time of spectrum for reference
             self.results['spectra_time'] = self.obs_times[idx_spec] if self.obs_times is not None else idx_spec
             self.results['spectra_ff_sp'] = ff_sp_snapshot
 
             for name, resolution, filt_name, wv_range in zip(self.spectra_names, self.spectra_resolutions, self.spectra_filters, self.spectra_ranges):
-                # Temporarily set resolution (needed by create_observed_spectra legacy code or update it)
-                # Actually, create_synthetic_spectra uses self.spectra_resolution
+                # Temporarily set resolution
                 self.spectra_resolution = resolution 
                 
                 # Create spectra using the SNAPSHOT filling factor
                 spectra_flux, wvp_spec = spectra.create_observed_spectra(
                     self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
-                    spectra_filter_name=filt_name, wavelength_range=wv_range
+                    spectra_filter_name=filt_name, wavelength_range=wv_range,
+                    instrument_resolution=resolution, ff_planet=ff_pl_snapshot
                 )
                 
                 # Cut wavelength range if specified
