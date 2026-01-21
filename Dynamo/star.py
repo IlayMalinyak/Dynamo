@@ -238,7 +238,9 @@ class Star:
         self.spot_max_lat = params_dict['Spot Max']
         self.spot_min_lat = params_dict['Spot Min']
         self.spots_decay_time = params_dict['Decay Time']
+        self.spots_decay_time = params_dict['Decay Time']
         self.butterfly = params_dict['Butterfly']
+        self.distance = params_dict['Distance']
 
 
     def set_planet_parameters(self, params_dict):
@@ -418,9 +420,27 @@ class Star:
             flx_ph, vec_grid, plot_map=self.plot_grid_map
         )
 
+        # Scale flux by (R / d)^2
+        # Constants
+        R_SUN_CM = 6.957e10
+        PC_CM = 3.086e18
+        dist = getattr(self, 'distance', 10.0)
+        
+        # Calculate scale factor
+        scale_lc = (self.radius * R_SUN_CM) / (dist * PC_CM)
+        
+        # Apply Global Flux Scaling (to get photon-count-like values)
+        # User requested 10e30 (1e31) scaling to bring values to realistic range
+        FLUX_SCALE = 1e31
+        
+        FLUX *= scale_lc**2
+        FLUX *= FLUX_SCALE
+
         # Apply Noise (CDPP in ppm)
         if hasattr(self, 'cdpp') and self.cdpp > 0:
-            noise = np.random.normal(0, self.cdpp * 1e-6, len(FLUX))
+            # Noise should be relative to the flux level
+            noise_sigma = (self.cdpp * 1e-6) * np.mean(FLUX)
+            noise = np.random.normal(0, noise_sigma, len(FLUX))
             FLUX += noise
 
         self.final_spots_positions = spots_positions
@@ -450,7 +470,10 @@ class Star:
                 spectra_flux, wvp_spec = spectra.create_observed_spectra(
                     self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
                     spectra_filter_name=filt_name, wavelength_range=wv_range,
-                    instrument_resolution=resolution, ff_planet=ff_pl_snapshot
+                    instrument_resolution=resolution, ff_planet=ff_pl_snapshot,
+                    dist=getattr(self, 'distance', 10.0), # Default 10pc
+                    rad=self.radius,
+                    flux_scale=FLUX_SCALE
                 )
                 
                 # Cut wavelength range if specified

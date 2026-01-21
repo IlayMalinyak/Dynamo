@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import integrate
+from scipy import integrate, stats
 
 def kroupa_imf(m):
     """
@@ -68,6 +68,42 @@ def sample_kroupa_imf(n_samples, m_min=0.3, m_max=2.0):
     masses = np.interp(u, cdf, m_grid)
 
     return masses
+
+def sample_kepler_imf(n_samples, m_min=0.3, m_max=2.0):
+    """
+    Generate random samples approximating the Kepler target list mass distribution.
+    Uses a Log-Normal distribution matching Kepler statistics:
+    Mean ~ 1.11, Median ~ 1.05 -> mu ~ 0.05, sigma ~ 0.3
+
+    Parameters:
+    -----------
+    n_samples : int
+        Number of samples to generate
+    m_min : float
+        Minimum mass
+    m_max : float
+        Maximum mass
+
+    Returns:
+    --------
+    masses : ndarray
+        Array of sampled masses
+    """
+    # Derived parameters from user stats (Mean=1.11, Median=1.054)
+    mu = 0.05
+    sigma = 0.3
+    
+    # Generate samples with rejection sampling to respect bounds while preserving PDF shape
+    masses = []
+    # Oversample to account for rejection
+    batch_size = int(n_samples * 1.5)
+    
+    while len(masses) < n_samples:
+        samples = np.random.lognormal(mean=mu, sigma=sigma, size=batch_size)
+        valid_samples = samples[(samples >= m_min) & (samples <= m_max)]
+        masses.extend(valid_samples)
+        
+    return np.array(masses[:n_samples])
 
 if __name__ == '__main__':
     # Generate a sample of stellar masses

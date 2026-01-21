@@ -10,7 +10,7 @@ import multiprocessing as mp
 from Dynamo.planet_params import generate_planet_parameters
 from tqdm import tqdm
 from Dynamo.star import Star
-from Dynamo.imf import sample_kroupa_imf
+from Dynamo.imf import sample_kroupa_imf, sample_kepler_imf
 from Dynamo.stellar_interpolator import interpolate_stellar_parameters
 from Dynamo.phoenix import download_phoenix_models
 import scipy.stats as stats
@@ -83,14 +83,15 @@ def age_activity_relation(age, saturation_age_gyr=0.1):
 
 
 
-def calculate_cdpp(L, Nlc):
+def calculate_cdpp(L, distance, Nlc):
     """
-    Calculate CDPP (Noise) based on Luminosity and random Distance.
-    
+    Calculate CDPP based on Kepler magnitude.
     Parameters:
     -----------
-    L : float array
-        Luminosity array (L_sun)
+    L : array
+        Luminosity in solar units
+    distance : array
+        Distance in parsecs
     Nlc : int
         Number of light curves
         
@@ -98,12 +99,9 @@ def calculate_cdpp(L, Nlc):
     --------
     cdpp : float array
         Calculated CDPP in ppm
+    distance : array
+        Distance in parsecs
     """
-    # 1. Assign distances (Uniform volume density: r ~ U^(1/3))
-    # Range: 100 pc to 1000 pc (typical Kepler field)
-    u_dist = np.random.uniform(100**3, 1000**3, size=Nlc)
-    distance = u_dist**(1/3) # parsecs
-
     # 2. Calculate Apparent Magnitude
     # Absolute Bolometric Magnitude
     M_bol = 4.74 - 2.5 * np.log10(L)
@@ -142,7 +140,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
     diffrot_shear = np.random.uniform(0, 0.4, size=Nlc)
-    mass = sample_kroupa_imf(Nlc, m_min=0.3, m_max=2.0)
+    mass = sample_kepler_imf(Nlc, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=Nlc)
     ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=Nlc)
@@ -156,10 +154,11 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     convective_shift = np.random.normal(loc=1, scale=1, size=Nlc)
     teff = interp['Teff']
     logg = interp['logg']
-    L = np.clip(interp['L'], a_min=None, a_max=40)
+    L = np.clip(interp['L'], a_min=None, a_max=1000)
     R = interp['R']
     if 'Prot' in interp.keys() and interp['Prot'] is not None:
         prot = interp['Prot']
+        # replace very long periods with random values
         mask = prot > 100
         prot[mask] = np.random.uniform(35, 50, size=np.count_nonzero(mask))
     else:
@@ -168,8 +167,12 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
         prot = np.concatenate((prot1, prot2))
         np.random.shuffle(prot)
     # generate clean samples
+    # 1. Assign distances (Log-Normal distribution matching from Kepler)
+    # Mean ~1320 pc, Median ~1108 pc -> mu ~ 7.0, sigma ~ 0.6
+    distance = np.random.lognormal(mean=7.0, sigma=0.6, size=Nlc)
+    
     if add_noise:
-        cdpp = calculate_cdpp(L, Nlc)
+        cdpp = calculate_cdpp(L, distance, Nlc)
     else:
         cdpp = 0
     # outlier_rate = np.random.uniform(0, 0.003, size=Nlc) # example of outlier rate
@@ -202,6 +205,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     sims["Decay Time"] = tau_evol
     sims["Butterfly"] = butterfly
     sims['convective_shift'] = convective_shift
+    sims['Distance'] = distance
     sims['CDPP'] = cdpp
     sims['Outlier Rate'] = outlier_rate
     sims['Flicker Time Scale'] = flicker
@@ -395,7 +399,9 @@ def simulate_one(models_root,
                 'radius': float(sim_row['R']),
                 'inclination': float(sim_row['Inclination']),
                 'rotation_period': float(sim_row['Period']),
+                'rotation_period': float(sim_row['Period']),
                 'differential_rotation': float(sim_row['Shear']),
+                'distance': float(sim_row['Distance']),
             },
             'planet_params': {k:v for k, v in sim_row.items() if 'planet' in k} ,
 
@@ -541,7 +547,7 @@ def main():
         # Generate simulations
         logger.info(f"Generating {args.num_simulations} simulations.")
         sims = generate_simdata(args.dataset_dir, args.num_simulations, logger, add_noise=args.add_noise)
-
+    
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())
     teff_range = (sims['Teff'].min(), sims['Teff'].max())

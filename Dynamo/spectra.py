@@ -420,7 +420,8 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
 
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
-                          spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, ff_planet=0.0):
+                          spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, ff_planet=0.0,
+                          dist=None, rad=None, flux_scale=1.0):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
 
@@ -446,6 +447,12 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
         Instrumental resolution (R). If None, uses star.spectra_resolution.
     ff_planet : float, optional
         Planet filling factor (fraction of disk blocked by planet). Default 0.
+    dist : float, optional
+        Distance to the star in parsecs.
+    rad : float, optional
+        Stellar radius in Solar Radii.
+    flux_scale : float, optional
+        Global flux scaling factor (default 1.0).
 
     Returns:
     --------
@@ -483,6 +490,19 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
 
     combined_spectrum = ((1 - fill_factor - ff_planet) * disk_integrated_photo +
                          fill_factor * disk_integrated_spot)
+
+    # Scale flux by (R / d)^2 if distance and radius provided
+    if dist is not None and rad is not None:
+        # Constants
+        R_SUN_CM = 6.957e10
+        PC_CM = 3.086e18
+        
+        # Calculate scale factor
+        scale = (rad * R_SUN_CM) / (dist * PC_CM)
+        combined_spectrum *= scale**2
+        
+    # Apply global flux scale
+    combined_spectrum *= flux_scale
 
     # Apply stellar rotational broadening
     if star.vsini > 0:
