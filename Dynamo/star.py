@@ -14,6 +14,9 @@ from . import noise
 from . import spots
 from . import spectra
 
+FLUX_SCALE = 1e26
+
+
 # initialize numba
 nbspectra.dummy()
 
@@ -285,9 +288,10 @@ class Star:
         self.spot_map = spots_config
         if len(spots_config) > 0:
             recommended_n = 120 / (spots_config[:, 4].min())
-            self.n_grid_rings = int(max(10, min(recommended_n, 20))) # Cap resolution to prevent slowdowns
+            # Increase resolution cap to prevent aliasing (artifacts/sharp dips)
+            self.n_grid_rings = int(max(20, min(recommended_n, 30))) 
         else:
-            self.n_grid_rings = 10
+            self.n_grid_rings = 20
         print("number of spots: ", len(regions), 'activity: ', self.activity)
         print("number of grid rings: ", self.n_grid_rings)
 
@@ -430,9 +434,8 @@ class Star:
         scale_lc = (self.radius * R_SUN_CM) / (dist * PC_CM)
         
         # Apply Global Flux Scaling (to get photon-count-like values)
-        # User requested 10e30 (1e31) scaling to bring values to realistic range
-        FLUX_SCALE = 1e31
-        
+        # Factor 2.5e14 maps Sun@100pc (~10^-9) to ~1.5e5 counts (Kepler-like)
+        # Avoids float precision issues with excessively large scales (like 1e31)        
         FLUX *= scale_lc**2
         FLUX *= FLUX_SCALE
 
@@ -443,6 +446,10 @@ class Star:
             noise = np.random.normal(0, noise_sigma, len(FLUX))
             FLUX += noise
 
+        # EXPLICITLY SAVE THE SCALED FLUX TO RESULTS
+        self.results['lc'] = FLUX
+        self.results['wvp'] = wvp # Save wavelength array too if needed
+        
         self.final_spots_positions = spots_positions
 
         # For SPECTRA: Loop through configured instruments
