@@ -169,9 +169,11 @@ class Rotator():
 
             omega = 2 * np.pi / (self.star.rotation_period * D2S)
 
-            phase = omega * (1 - self.star.differential_rotation * np.sin(lat) ** 2)
+            # Differential rotation factor (latitude-dependent)
+            phase_factor = (1 - self.star.differential_rotation * np.sin(lat) ** 2)
 
-            phsr = longi + omega * time_diff * D2S * phase
+            # Update longitude with corrected differential rotation
+            phsr = longi + omega * time_diff * D2S * phase_factor
 
 
             if self.star.spots_evo_law == 'constant':
@@ -223,9 +225,11 @@ class Rotator():
 
         omega = 2 * np.pi / (self.star.rotation_period * D2S)
 
-        phase = omega * (1 - self.star.differential_rotation * np.sin(np.deg2rad(lat)) ** 2)
+        # Differential rotation factor (latitude-dependent)
+        phase_factor = (1 - self.star.differential_rotation * np.sin(np.deg2rad(lat)) ** 2)
 
-        phsr = longi + np.rad2deg(time_diff * D2S * phase)
+        # Update longitude with corrected differential rotation
+        phsr = longi + np.rad2deg(time_diff * D2S * omega * phase_factor)
 
 
         # base_rotation = longi + (time_diff / self.star.rotation_period % 1) * 360
