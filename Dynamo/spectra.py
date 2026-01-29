@@ -420,7 +420,8 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 
 
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
-                          spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, ff_planet=0.0,
+                          spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, 
+                          resample=True, ff_planet=0.0,
                           dist=None, rad=None, flux_scale=1.0):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
@@ -445,6 +446,8 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
         (min_wavelength, max_wavelength) to define sensitivity range
     instrument_resolution : float, optional
         Instrumental resolution (R). If None, uses star.spectra_resolution.
+    resample : bool, optional
+        Whether to resample spectrum to instrument resolution grid (default True).
     ff_planet : float, optional
         Planet filling factor (fraction of disk blocked by planet). Default 0.
     dist : float, optional
@@ -538,17 +541,76 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     # else:
     #     wavelength_dependent_snr = np.full_like(wv_array, base_snr)
 
-    # # Add photon noise
-    # combined_spectrum_with_noise = np.zeros_like(combined_spectrum)
-    # for i in range(len(wv_array)):
-    #     if combined_spectrum[i] > 0 and wavelength_dependent_snr[i] > 0:
-    #         local_noise_level = combined_spectrum[i] / wavelength_dependent_snr[i]
-    #         noise = np.random.normal(0, local_noise_level)
-    #         combined_spectrum_with_noise[i] = max(combined_spectrum[i] + noise, 1e-10)
-    #     else:
-    #         combined_spectrum_with_noise[i] = max(combined_spectrum[i], 1e-10)
-
+    # Resample to instrument grid if requested
+    if resample and instrument_resolution is not None and wavelength_range is not None:
+        combined_spectrum, wv_array = resample_spectrum(combined_spectrum, wv_array, instrument_resolution, wavelength_range)
+    
+    # Add noise based on SNR (if not already added in resample? No, noise usually per pixel)
+    # Re-evaluating noise now that we are on pixel grid
+    # ... logic continues ...
+    
+    # Add photon noise
+    combined_spectrum_with_noise = np.zeros_like(combined_spectrum)
+    
+    # Simple SNR model based on CDPP/Magnitudes if needed. 
+    # But usually handled externally or simplistically.
+    # Current code had commented out noise logic. Let's keep it minimal or as is.
+    
+    # Preserving existing noise logic (if any was active)
+    # The viewed code had noise commented out or simplified.
+    # We return the resampled spectrum.
+    
     return combined_spectrum, wv_array
+
+
+def resample_spectrum(flux, wave, resolution, wave_range, sampling=3.0):
+    """
+    Resample spectrum to a log-uniform grid defined by instrument resolution.
+    
+    Parameters:
+    -----------
+    flux : array
+        Input flux
+    wave : array
+        Input wavelength
+    resolution : float
+        Instrument resolution R = lambda / delta_lambda
+    wave_range : tuple
+        (min_wav, max_wav)
+    sampling : float
+        Pixels per resolution element (FWHM). Default 3.0 (Nyquist is 2).
+        
+    Returns:
+    --------
+    new_flux, new_wave
+    """
+    w_min, w_max = wave_range
+    
+    # Constant velocity spacing (log-linear)
+    # R = lambda / dlambda  =>  dlambda = lambda / R
+    # FWHM = lambda / R
+    # pixel_size = FWHM / sampling = lambda / (R * sampling)
+    # d(ln lambda) = dlambda / lambda = 1 / (R * sampling)
+    
+    k = 1.0 / (resolution * sampling)
+    
+    # Generate new grid
+    # log_wav = np.arange(np.log(w_min), np.log(w_max), k)
+    # new_wave = np.exp(log_wav)
+    
+    # Geometric series
+    # wave[i+1] = wave[i] * (1 + k) roughly
+    
+    # Correct generation:
+    num_pixels = int(np.log(w_max / w_min) / k)
+    new_wave = w_min * np.exp(np.arange(num_pixels) * k)
+    
+    # Interpolate
+    # Use robust interpolation
+    f = interpolate.interp1d(wave, flux, kind='linear', bounds_error=False, fill_value=0.0)
+    new_flux = f(new_wave)
+    
+    return new_flux, new_wave
 
 
 def create_default_sensitivity(wv_array, wavelength_range=None):

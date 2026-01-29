@@ -349,7 +349,17 @@ class SpotsGenerator(object):
                 jlat = np.arange(self.nlat, dtype=int)
                 lat_centers = l1 + dlat * (0.5 + jlat)
                 lat_probs = np.exp(-((lat_centers - latavg) / latrms) ** 2)
-                lat_probs = lat_probs / lat_probs.sum()
+                
+                # Handle NaNs and zero sum
+                if np.any(np.isnan(lat_probs)):
+                    lat_probs = np.nan_to_num(lat_probs)
+                
+                prob_sum = lat_probs.sum()
+                if prob_sum == 0:
+                    # Fallback to uniform distribution if probabilities vanish
+                    lat_probs[:] = 1.0 / len(lat_probs)
+                else:
+                    lat_probs = lat_probs / prob_sum
 
                 # Choose latitude bin
                 j = np.random.choice(jlat, p=lat_probs)

@@ -10,6 +10,8 @@
 
 - **Stellar Surface Simulation**: Models the emergence and evolution of star spots and active regions using configurable activity cycles, latitude distributions, and spot evolution laws. This part is based on the [Butterpy](https://github.com/zclaytor/butterpy) package.
 - **Grid-based lightcurve and spectra**: Generates synthetic spectra and light curves, including the effects of limb darkening, rotational broadening and spot evolution. This is done in a grid approach and motivated by the [Starsim](https://github.com/dbarochlopez/starsim) package.
+- **Multi-instrument Spectroscopy**: Simulates realistic spectra for specific instruments (e.g., LAMOST R~1800, APOGEE R~22500) including resolution convolution and resampling to detector pixel grids.
+- **Physics-based Rotation**: Includes latitude-dependent differential rotation and robust period recovery tools (ACF) tested on multi-spot scenarios.
 - **Stellar Evolution Parameters**: Interpolates stellar parameters (e.g., mass, radius, temperature, luminosity) from evolutionary models. To get stellar evolution parameters we use [kiauhoku](https://github.com/zclaytor/kiauhoku) package. 
 
 Using **Dynamo** we can easily link between stellar evolution parameters (Temperature, mass, logg, etc.) and magnetic-driven spots. Such connection enable the creation of simulated light curve and spectra of the same star, which can serve as a simulated dataset for multi-modal machine learning models for example.

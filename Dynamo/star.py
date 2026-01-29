@@ -204,7 +204,10 @@ class Star:
         v_equatorial = 2 * np.pi * radius_km / period_seconds  # km/s
 
         # Calculate the projected velocity (vsini)
-        vsini = v_equatorial * np.sin(np.pi/2 - self.inclination)
+        # Standard formula: vsini = v_eq * sin(i)
+        # where i=0° (pole-on) gives vsini=0, i=90° (equator-on) gives vsini=v_eq
+        # Note: self.inclination is stored in degrees, must convert to radians
+        vsini = v_equatorial * np.sin(np.deg2rad(self.inclination))
         return  vsini
 
     @property
@@ -234,7 +237,9 @@ class Star:
         self.cdpp = params_dict['CDPP']
         self.outliers_rate = params_dict['Outlier Rate']
         self.flicker = params_dict['Flicker Time Scale']
-        self.inclination = 90 - np.rad2deg(params_dict['Inclination'])
+        # Inclination convention: i=0° is pole-on, i=90° is equator-on
+        # Input is in radians, convert to degrees
+        self.inclination = np.rad2deg(params_dict['Inclination'])
         self.activity = params_dict['Activity Rate']
         self.cycle_len = params_dict['Cycle Length']
         self.cycle_overlap = params_dict['Cycle Overlap']
