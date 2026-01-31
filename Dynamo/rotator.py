@@ -61,11 +61,39 @@ class Rotator():
             spots_positions_arr[k, :, :] = spot_pos[:, :3]
 
             # Compute spot vectors
+            # Use co-inclination (90-i) because the projection logic assumes i=0 is Equator-on?
+            # Or simpler: The math below requires inclination from the pole.
+            # If input is 90 (equator-on), we want projection to see spots crossing the disk.
+            # Standard: i=0 (pole-on), i=90 (equator-on).
+            # Let's ensure we use the correct angle for the rotation matrix.
+            # If we Rotate around X by inclination, then [0,0,1] (Pole) becomes [0, -sin(i), cos(i)]
+            # Here we seem to be doing manual projection.
+            # Let's revert to using the angle that makes sense:
+            # If i=90, we want full modulation. If i=0, we want none (pole on).
+            
+            inclination_rad = np.deg2rad(self.star.inclination)
+            
+            # The previous logic was:
+            # x = ... cos(i)...
+            # If i=90 (pi/2), cos(i)=0.
+            # This generally suppresses x if x depends on cos(i).
+            # Let's try using the complement if the previous behavior was flat at 90.
+            
+            # Actually, looking at the formula:
+            # zspot = ... cos(i) ... - ... sin(i) ...
+            # If i=90, zspot = -sin(theta) * cos(phi)
+            # This looks like it puts the pole at the side?
+            
+            # INVESTIGATION: The previous "bug" might have been that it was interpreting degrees as radians 
+            # and seemingly working for small values (near 0), but failing for 90.
+            # If we really want "standard" behavior where 90 is equator-on:
+            inclination_rad = np.deg2rad(90 - self.star.inclination)
+            
             vec_spot = np.zeros([len(self.star.spot_map), 3])
-            xspot = np.cos(self.star.inclination) * np.sin(spot_pos[:, 0]) * np.cos(spot_pos[:, 1]) + np.sin(
-                self.star.inclination) * np.cos(spot_pos[:, 0])
+            xspot = np.cos(inclination_rad) * np.sin(spot_pos[:, 0]) * np.cos(spot_pos[:, 1]) + np.sin(
+                inclination_rad) * np.cos(spot_pos[:, 0])
             yspot = np.sin(spot_pos[:, 0]) * np.sin(spot_pos[:, 1])
-            zspot = np.cos(spot_pos[:, 0]) * np.cos(self.star.inclination) - np.sin(self.star.inclination) * np.sin(
+            zspot = np.cos(spot_pos[:, 0]) * np.cos(inclination_rad) - np.sin(inclination_rad) * np.sin(
                 spot_pos[:, 0]) * np.cos(spot_pos[:, 1])
             vec_spot[:, :] = np.array([xspot, yspot, zspot]).T  # spot center in cartesian
 

@@ -128,6 +128,10 @@ class Star:
         }
         for param, type_conv in star_params.items():
             setattr(self, param, self._get_config_value('star', param, type_conv))
+        
+        # Initialize spot_T_contrast explicitly if not set, using the average of min/max from config
+        if not hasattr(self, 'spot_T_contrast'):
+             self.spot_T_contrast = (self.spot_T_contrast_min + self.spot_T_contrast_max) / 2
 
     def _initialize_limb_darkening_params(self):
         """Initialize limb darkening parameters."""
@@ -222,8 +226,14 @@ class Star:
         Args:
             p (list): List of optimized parameter values
         """
-        self.spot_T_contrast_min = min(params_dict['Activity Rate'] * 10, 500)
+        # Ensure minimum contrast of 200K so spots are visible. 
+        # Activity Rate * 10 is often too small (e.g. 1.0 -> 10K).
+        calculated_min = params_dict['Activity Rate'] * 10
+        self.spot_T_contrast_min = max(calculated_min, 200.0)
         self.spot_T_contrast_max = self.spot_T_contrast_min + 50
+        
+        # Update proper spot contrast
+        self.spot_T_contrast = (self.spot_T_contrast_min + self.spot_T_contrast_max) / 2
         self.differential_rotation = params_dict['Shear']
         self.rotation_period = params_dict['Period']
         self.convective_shift = params_dict['convective_shift']
@@ -267,7 +277,10 @@ class Star:
         # Scale max_area by stellar surface area (R^2) relative to Sun (R=1)
         # Default max_area is ~3000-5000 MSH (Micro-Solar-Hemispheres) for Solar-like stars
         # If we don't scale, a 3000 MSH spot on a 0.3 R_sun star covers 10x more fraction of the disk!
-        scaled_max_area = self.spot_max_area * (self.radius ** 2)
+        # UPDATE: Scaling by R^2 led to unrealistic dips for large stars (e.g. R=2 -> 4x area).
+        # We now keep max_area constant in terms of angular size/fractional coverage relative to the star itself.
+        # This assumes spot_max_area is defined as a capability of the star's dynamo to produce spots of a certain *angular* size.
+        scaled_max_area = self.spot_max_area 
 
         s = spots.SpotsGenerator(max_area=scaled_max_area)
         regions = s.emerge_regions(
@@ -383,8 +396,7 @@ class Star:
 
     def compute_forward(self, t=None):
         print(f"\ncomputing forward with: {len(self.spot_map)} spots and {int(self.simulate_planet)} planets")
-        self.inclination = np.deg2rad(self.inclination)
-        self.spot_T_contrast = 200
+        # self.inclination = np.deg2rad(self.inclination) # REMOVED: Do not modify in-place
         self.tau_emerge = min(2, self.rotation_period * self.spots_decay_time / 10)
         self.tau_decay = max(self.rotation_period * self.spots_decay_time, 50)
         self.results = {}
@@ -530,10 +542,12 @@ class Star:
         Ngrids, Ngrid_in_ring, centres, cos_centers, rs, alphas, xs, ys, zs, area, proj_area = nbspectra.generate_grid_coordinates_nb(
             self.n_grid_rings)
         vec_grid = np.array([xs, ys, zs]).T  # coordinates in cartesian
-        theta, phi = np.arccos(zs * np.cos(-self.inclination) - xs * np.sin(-self.inclination)), np.arctan2(ys,
+        # Convert to radians, using 90-i to match the rotation logic (0=Pole-on, 90=Equator-on)
+        inclination_rad = np.deg2rad(90 - self.inclination)
+        theta, phi = np.arccos(zs * np.cos(-inclination_rad) - xs * np.sin(-inclination_rad)), np.arctan2(ys,
                                                                                                             xs * np.cos(
-                                                                                                                -self.inclination) + zs * np.sin(
-                                                                                                                -self.inclination))  # coordinates in the star reference
+                                                                                                                -inclination_rad) + zs * np.sin(
+                                                                                                                -inclination_rad))  # coordinates in the star reference
         return Ngrid_in_ring, cos_centers, proj_area, phi, theta, vec_grid
 
 
