@@ -419,6 +419,141 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
     return sflp, flxph
 
 
+def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sini, coverage,
+                                   instrument_resolution=None, wavelength_range=None,
+                                   resample=True, spectra_filter_name='None',
+                                   dist=None, rad=None, flux_scale=1.0):
+    """
+    Advanced spectral integration using velocity kernels to simulate RM effect and line profile variations.
+    
+    Parameters:
+    -----------
+    coverage : 2D array [N_pixels, 4]
+        Pixel-by-pixel coverage [aph, asp, afc, apl]
+    mu_sini : 1D array
+        Mu angles of Phoenix models
+    """
+    import numpy as np
+    from scipy import signal, interpolate
+
+    c_kms = 299792.458
+    
+    # Get grid geometry
+    Ngrids, Ngrid_in_ring, centres, amu, rs, alphas, xs, ys, zs, area, parea = nbspectra.generate_grid_coordinates_nb(star.n_grid_rings)
+    parea = np.array(parea) # Ensure numpy array for indexing
+    
+    # Map pixels to rings and rings to Phoenix mu indices
+    ring_indices = []
+    for i, n in enumerate(Ngrid_in_ring):
+        ring_indices.extend([i] * n)
+    ring_indices = np.array(ring_indices)
+    
+    ring_to_mu_idx = np.zeros(len(amu), dtype=int)
+    for i, mu in enumerate(amu):
+        ring_to_mu_idx[i] = np.argmin(np.abs(mu_sini - mu))
+    
+    # Projected velocities
+    # ys is the coordinate that represents the horizontal shift on the sky (Doppler shift)
+    v_pixels = star.vsini * ys
+    
+    # Resample to log-lambda for convolution
+    # We want a grid that covers the vsini and instrumental profile
+    log_grid, _, interp_back = _resample_to_log_lambda(wv_array, np.zeros_like(wv_array))
+    dv = c_kms * np.log(10) * (log_grid[1] - log_grid[0])
+    
+    # Velocity grid for kernels (centered at 0)
+    # Kernels should be large enough to cover max vsini
+    v_max = star.vsini * 1.5 + 50.0 # safety margin
+    nv_half = int(np.ceil(v_max / dv))
+    v_kernel_grid = np.arange(-nv_half, nv_half + 1) * dv
+    v_edges = np.concatenate([v_kernel_grid - 0.5*dv, [v_kernel_grid[-1] + 0.5*dv]])
+
+    total_spectrum_log = np.zeros_like(log_grid)
+    
+    # For each Phoenix mu angle that has visible pixels
+    active_mu_indices = np.unique(ring_to_mu_idx)
+    
+    for mu_idx in active_mu_indices:
+        # Get pixels belonging to rings that map to this mu_idx
+        rings_in_mu = np.where(ring_to_mu_idx == mu_idx)[0]
+        pixels_in_mu = np.where(np.isin(ring_indices, rings_in_mu))[0]
+        
+        if len(pixels_in_mu) == 0: continue
+        
+        # Coverage fractions for these pixels
+        aph = coverage[pixels_in_mu, 0]
+        asp = coverage[pixels_in_mu, 1]
+        afc = coverage[pixels_in_mu, 2]
+        apl = coverage[pixels_in_mu, 3] # blocks the light
+        
+        # Weights for kernels: Area * mu * (visible fraction)
+        # Note: parea[ring_idx] is the projected area mu*area for one grid element in that ring
+        area_pixels = parea[ring_indices[pixels_in_mu]]
+        visible_photo = aph * (1.0 - apl) * area_pixels
+        visible_spot = (asp + afc) * (1.0 - apl) * area_pixels
+        
+        v_mu = v_pixels[pixels_in_mu]
+        
+        # Histogram into velocity kernels
+        kernel_ph, _ = np.histogram(v_mu, bins=v_edges, weights=visible_photo)
+        kernel_sp, _ = np.histogram(v_mu, bins=v_edges, weights=visible_spot)
+        
+        # convolve photosphere intensity
+        if np.sum(kernel_ph) > 0:
+            I_ph = photo_flux[mu_idx]
+            # interpolate I_ph to log_grid if needed? 
+            # create_observed_spectra assumes photo_flux is already on wv_array or resampled.
+            # Let's assume input flux is on wv_array for simplicity.
+            _, I_ph_log, _ = _resample_to_log_lambda(wv_array, I_ph, n=len(log_grid))
+            # kernel needs to be normalized? 
+            # No, the integral should represent total flux. 
+            # Area of grid sum should be pi*R^2. 
+            # But the kernels already include parea, which is the solid angle (mu*area).
+            # So the convolution sum correctly gives the integrated flux.
+            conv_ph = signal.fftconvolve(I_ph_log, kernel_ph / (2.0 * np.pi), mode='same')
+            total_spectrum_log += conv_ph
+            
+        # convolve spot intensity
+        if np.sum(kernel_sp) > 0:
+            I_sp = spot_flux[mu_idx]
+            _, I_sp_log, _ = _resample_to_log_lambda(wv_array, I_sp, n=len(log_grid))
+            conv_sp = signal.fftconvolve(I_sp_log, kernel_sp / (2.0 * np.pi), mode='same')
+            total_spectrum_log += conv_sp
+
+    # Map back to original wavelength grid
+    combined_spectrum = interp_back(total_spectrum_log)
+
+    # Scale flux by (R / d)^2
+    if dist is not None and rad is not None:
+        R_SUN_CM = 6.957e10
+        PC_CM = 3.086e18
+        scale = (rad * R_SUN_CM) / (dist * PC_CM)
+        combined_spectrum *= scale**2
+        
+    combined_spectrum *= flux_scale
+
+    # Apply instrumental broadening
+    if instrument_resolution is not None:
+        sigma_instrumental = c_kms / instrument_resolution
+        combined_spectrum = apply_rotational_broadening(wv_array, combined_spectrum, sigma_instrumental)
+
+    # Apply instrument sensitivity/filter
+    if spectra_filter_name == 'Raw':
+        pass 
+    elif spectra_filter_name is not None and spectra_filter_name != 'None':
+        instrument_sensitivity = interpolate_filter(star, spectra_filter_name)
+        combined_spectrum = combined_spectrum * instrument_sensitivity(wv_array)
+    else:
+        sensitivity_values = create_default_sensitivity(wv_array, wavelength_range)
+        combined_spectrum = combined_spectrum * sensitivity_values
+
+    # Resample to instrument grid if requested
+    if resample and instrument_resolution is not None and wavelength_range is not None:
+        combined_spectrum, wv_array = resample_spectrum(combined_spectrum, wv_array, instrument_resolution, wavelength_range)
+    
+    return combined_spectrum, wv_array
+
+
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
                           spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, 
                           resample=True, ff_planet=0.0,

@@ -25,7 +25,7 @@ class Rotator():
 
     def generate_rotating_photosphere_lc(self, Ngrid_in_ring, proj_area, cos_centers,
                                          brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
-                                         flx_ph, vec_grid, plot_map=True):
+                                         flx_ph, vec_grid, plot_map=True, epoch_indices=None):
         '''Loop for all the pixels and assign the flux corresponding to the grid element.
         '''
         simulate_planet = self.star.simulate_planet
@@ -44,6 +44,12 @@ class Rotator():
         filling_fc = np.zeros(len(self.star.obs_times))
 
         spots_positions_arr = np.zeros((len(self.star.obs_times), len(self.star.spot_map), 3))
+        
+        # Array to store pixel coverage for spectral epochs
+        epoch_coverage = {} 
+        if epoch_indices is not None:
+             # Store as dictionary mapping index to coverage array
+             pass
 
         for k, t in enumerate(self.star.obs_times):
             typ = []  # type of grid, ph sp or fc
@@ -137,10 +143,13 @@ class Rotator():
                 # Handle any runtime errors
                 print(f"Error at time {t}: {str(e)}")
                 flux[k] = flx_ph
-                filling_ph[k] = np.dot(Ngrid_in_ring, proj_area)
-                filling_sp[k] = 0.0
                 filling_fc[k] = 0.0
                 filling_pl[k] = 0.0
+
+            # Store pixel coverage if this is a spectral epoch
+            if epoch_indices is not None and k in epoch_indices:
+                # Convert typ (list of lists) to numpy array
+                epoch_coverage[k] = np.array(typ)
 
             # Calculate percentages for filling factors
             total_area = np.dot(Ngrid_in_ring, proj_area)
@@ -176,6 +185,9 @@ class Rotator():
             print(f"Extreme values: {normalized_flux[extreme_indices]}")
             # Clamp extreme values to a reasonable range
             normalized_flux = np.clip(normalized_flux, -10.0, 10.0)
+
+        if epoch_indices is not None:
+            return spots_positions_arr, normalized_flux, filling_ph, filling_sp, filling_fc, filling_pl, epoch_coverage
 
         return spots_positions_arr, normalized_flux, filling_ph, filling_sp, filling_fc, filling_pl
 

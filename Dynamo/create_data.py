@@ -318,13 +318,20 @@ def save_batch(batch_results, batch_idx, dataset_dir):
                 if name not in spectra_storage:
                     spectra_storage[name] = []
                 
-                # We can optimize space by not repeating wavelength if it's identical, 
-                # but for simplicity and safety (as it might vary with vsini/doppler) we save it.
-                # However, typically wavelength grid is constant for a given instrument.
-                # Use float32 to save space?
-                df_spec = pd.DataFrame({'wavelength': wv, 'flux': flux})
-                df_spec['sim_id'] = idx
-                spectra_storage[name].append(df_spec)
+                # If flux is 2D (epochs, wavelength), we need to handle it
+                if flux.ndim == 2:
+                    n_epochs = flux.shape[0]
+                    for e in range(n_epochs):
+                        df_spec = pd.DataFrame({'wavelength': wv, 'flux': flux[e]})
+                        df_spec['sim_id'] = idx
+                        df_spec['epoch'] = e
+                        spectra_storage[name].append(df_spec)
+                else:
+                    # Backward compatibility for 1D flux
+                    df_spec = pd.DataFrame({'wavelength': wv, 'flux': flux})
+                    df_spec['sim_id'] = idx
+                    df_spec['epoch'] = 0
+                    spectra_storage[name].append(df_spec)
 
     # Save LCs
     if lcs:
@@ -437,6 +444,9 @@ def simulate_one(models_root,
                 'num_points': len(t_sampling),
                 'evolution_law': 'gaussian',
                 'wavelength_range': [float(wavelength[0]), float(wavelength[-1])] if hasattr(wavelength, '__len__') and len(wavelength)>0 else [],
+                'n_spectra_epochs': int(sm.n_spectra_epochs),
+                'spectra_cadence': float(sm.spectra_cadence),
+                'spectra_times': [float(t) for t in sm.results['spectra_times']] if 'spectra_times' in sm.results else [],
             }
         }
 

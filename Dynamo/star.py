@@ -116,6 +116,19 @@ class Star:
             self.spectra_resolutions = self.spectra_resolutions[:min_len]
             self.spectra_filters = self.spectra_filters[:min_len]
             self.spectra_ranges = self.spectra_ranges[:min_len] if len(self.spectra_ranges) >= min_len else self.spectra_ranges + [None]*(min_len - len(self.spectra_ranges))
+ 
+        # Epoch spectra parameters
+        self.n_spectra_epochs = self._get_config_value('general', 'n_spectra_epochs', int)
+        if self.n_spectra_epochs is None: self.n_spectra_epochs = 1
+        
+        self.spectra_cadence = self._get_config_value('general', 'spectra_cadence', float)
+        if self.spectra_cadence is None: self.spectra_cadence = 1.0
+        
+        start_time_str = self._get_config_value('general', 'spectra_start_time', str)
+        if start_time_str is None or start_time_str.lower() == 'none':
+            self.spectra_start_time = None
+        else:
+            self.spectra_start_time = float(start_time_str)
 
     def _initialize_star_params(self):
         """Initialize star-related parameters."""
@@ -429,17 +442,54 @@ class Star:
             spot_flux, f_filt_lc, wvp, vsini=0.0
         )
 
-        brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp  # if there are no faculae
-        if self.facular_area_ratio > 0:
-            raise NotImplementedError('facular calculation is not yet implemented')
+        brigh_grid_fc, flx_fc = spectra.compute_immaculate_lc_with_vsini(
+            self, Ngrid_in_ring, sini, cos_centers, proj_area,
+            photo_flux, f_filt_lc, wvp, vsini=0.0
+        )
 
-        # Generate rotation light curve
+        # Determine spectral epochs indices before LC generation
+        idx_epochs = []
+        if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
+            n_times = len(t)
+            sampling_rate = self.obs_times[1] - self.obs_times[0] if len(self.obs_times) > 1 else 1.0
+
+            if self.n_spectra_epochs > 1:
+                cadence_idx = int(round(self.spectra_cadence / sampling_rate))
+                if cadence_idx < 1: cadence_idx = 1
+                total_span_idx = (self.n_spectra_epochs - 1) * cadence_idx
+
+                if self.spectra_start_time is not None:
+                    start_idx = np.argmin(np.abs(self.obs_times - self.spectra_start_time))
+                    idx_epochs = [start_idx + i * cadence_idx for i in range(self.n_spectra_epochs)]
+                    if idx_epochs[-1] >= n_times:
+                        idx_epochs = [idx for idx in idx_epochs if idx < n_times]
+                else:
+                    max_start_idx = n_times - total_span_idx - 1
+                    if max_start_idx < 0:
+                        idx_epochs = [np.random.randint(0, n_times)]
+                    else:
+                        start_idx = np.random.randint(0, max_start_idx + 1)
+                        idx_epochs = [start_idx + i * cadence_idx for i in range(self.n_spectra_epochs)]
+            else:
+                if self.spectra_start_time is not None:
+                    start_idx = np.argmin(np.abs(self.obs_times - self.spectra_start_time))
+                    idx_epochs = [start_idx]
+                else:
+                    idx_epochs = [np.random.randint(0, n_times)]
+
         rotator = Rotator(self)
-        spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl = rotator.generate_rotating_photosphere_lc(
+        rot_res = rotator.generate_rotating_photosphere_lc(
             Ngrid_in_ring, proj_area, cos_centers,
             brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
-            flx_ph, vec_grid, plot_map=self.plot_grid_map
+            flx_ph, vec_grid, plot_map=self.plot_grid_map,
+            epoch_indices=idx_epochs if idx_epochs else None
         )
+        
+        if len(rot_res) == 7:
+             spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl, epoch_coverage = rot_res
+        else:
+             spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl = rot_res
+             epoch_coverage = {}
 
         # Scale flux by (R / d)^2
         # Constants
@@ -474,44 +524,56 @@ class Star:
         self.results['spectra'] = {} # Initialize as dictionary
         
         if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
-            # Pick a random time point for the spectral snapshot (simulate a single observation)
-            # We want to capture the star at a specific rotational phase
-            # Pick a random time point for the spectral snapshot
-            n_times = len(ff_sp)
-            idx_spec = np.random.randint(0, n_times)
-            ff_sp_snapshot = ff_sp[idx_spec]
-            ff_pl_snapshot = ff_pl[idx_spec] if ff_pl is not None else 0.0
-
-            # Store the specific time of spectrum for reference
-            self.results['spectra_time'] = self.obs_times[idx_spec] if self.obs_times is not None else idx_spec
-            self.results['spectra_ff_sp'] = ff_sp_snapshot
-
-            for name, resolution, filt_name, wv_range in zip(self.spectra_names, self.spectra_resolutions, self.spectra_filters, self.spectra_ranges):
-                # Temporarily set resolution
-                self.spectra_resolution = resolution 
+            self.results['spectra_times'] = self.obs_times[idx_epochs]
+            
+            for i, name in enumerate(self.spectra_names):
+                instrument_res = self.spectra_resolutions[i]
+                instrument_filter = self.spectra_filters[i]
+                instrument_range = self.spectra_ranges[i]
                 
-                # Create spectra using the SNAPSHOT filling factor
-                spectra_flux, wvp_spec = spectra.create_observed_spectra(
-                    self, wvp, photo_flux, spot_flux, sini, ff_sp_snapshot,
-                    spectra_filter_name=filt_name, wavelength_range=wv_range,
-                    instrument_resolution=resolution, ff_planet=ff_pl_snapshot,
-                    dist=getattr(self, 'distance', 10.0), # Default 10pc
-                    rad=self.radius,
-                    flux_scale=FLUX_SCALE
-                )
+                # Split range string "3000-9000" into (3000, 9000)
+                try:
+                    w_min, w_max = map(float, instrument_range.split('-'))
+                    w_range = (w_min, w_max)
+                except:
+                    w_range = (wvp[0], wvp[-1])
                 
-                # Cut wavelength range if specified
-                if wv_range is not None:
-                    min_wv, max_wv = wv_range
-                    mask = (wvp_spec >= min_wv) & (wvp_spec <= max_wv)
-                    wvp_spec = wvp_spec[mask]
-                    spectra_flux = spectra_flux[mask]
-
-                # Store tuple (wavelength, flux)
-                self.results['spectra'][name] = (wvp_spec, spectra_flux)
-        else:
-            # Legacy fallback or empty
-            pass
+                epoch_fluxes = []
+                wv_snap = wvp # Default
+                for idx in idx_epochs:
+                    coverage = epoch_coverage.get(idx)
+                    if coverage is not None:
+                        # Use advanced kernel integration
+                        flux_snap, wv_snap = spectra.create_observed_spectra_kernel(
+                            self, wvp, photo_flux, spot_flux, sini, coverage,
+                            instrument_resolution=instrument_res,
+                            wavelength_range=w_range,
+                            resample=True,
+                            spectra_filter_name=instrument_filter,
+                            dist=getattr(self, 'distance', 10.0),
+                            rad=self.radius,
+                            flux_scale=FLUX_SCALE
+                        )
+                    else:
+                        # Fallback to simple integration
+                        flux_snap, wv_snap = spectra.create_observed_spectra(
+                            self, wvp, photo_flux, spot_flux, sini, ff_sp[idx],
+                            instrument_resolution=instrument_res,
+                            wavelength_range=w_range,
+                            resample=True,
+                            spectra_filter_name=instrument_filter,
+                            ff_planet=ff_pl[idx]/100.0,
+                            dist=getattr(self, 'distance', 10.0),
+                            rad=self.radius,
+                            flux_scale=FLUX_SCALE
+                        )
+                    epoch_fluxes.append(flux_snap)
+                
+                # If only one epoch, store as 1D array for backward compatibility
+                if len(epoch_fluxes) == 1:
+                    self.results['spectra'][name] = (wv_snap, epoch_fluxes[0])
+                else:
+                    self.results['spectra'][name] = (wv_snap, np.array(epoch_fluxes))
 
         # Store results
         self.results['time'] = t
@@ -534,8 +596,9 @@ class Star:
                     self.planet_esinw, self.planet_ecosw, self.planet_transit_t0]
             )
         else:
-            rvkepler = 0.0
+            rvkepler = np.zeros_like(t)
 
+        self.results['rv'] = rvkepler
         return
 
     def get_theta_phi(self):
