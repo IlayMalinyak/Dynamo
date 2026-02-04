@@ -348,7 +348,7 @@ def save_batch(batch_results, batch_idx, dataset_dir):
     if not batch_results:
         return
 
-    lcs = []
+    lc_storage = {} # {instr_name: [list of dfs]}
     spots = []
     configs = {}
     spectra_storage = {}  # {spec_name: [list of dfs]}
@@ -357,19 +357,24 @@ def save_batch(batch_results, batch_idx, dataset_dir):
         if res is None: continue
         idx = res['id']
         
-        # LC
-        # t_sampling, lc
-        df_lc = pd.DataFrame(np.c_[res['t'], res['lc']], columns=['time', 'flux'])
-        df_lc['sim_id'] = idx
-        lcs.append(df_lc)
+        # LCs
+        if res['lcs']:
+            for name, (t_instr, flux_instr) in res['lcs'].items():
+                if name not in lc_storage:
+                    lc_storage[name] = []
+                df_lc = pd.DataFrame({'time': t_instr, 'flux': flux_instr})
+                df_lc['sim_id'] = idx
+                lc_storage[name].append(df_lc)
 
         # Spots
         # spot_map columns: init_time, duration, colatitude, longitude, r1, r2, r3
         # map is array
         if res['spots'] is not None and len(res['spots']) > 0:
-            df_spots = pd.DataFrame(res['spots'][:, :7], columns=["init_time", "duration(days)",
-                                                                  "colatitude", "longitude@ref_time",
-                                                                  "coeff_rad_1", "coeff_rad_2", "coeff_rad_3"])
+            # spot_map columns: init_time, duration, colatitude, longitude, radius
+            n_cols = min(res['spots'].shape[1], 7)
+            col_names = ["init_time", "duration(days)", "colatitude", "longitude@ref_time",
+                         "coeff_rad_1", "coeff_rad_2", "coeff_rad_3"][:n_cols]
+            df_spots = pd.DataFrame(res['spots'][:, :n_cols], columns=col_names)
             df_spots['sim_id'] = idx
             spots.append(df_spots)
 
@@ -398,8 +403,11 @@ def save_batch(batch_results, batch_idx, dataset_dir):
                     spectra_storage[name].append(df_spec)
 
     # Save LCs
-    if lcs:
-        pd.concat(lcs).to_parquet(f"{dataset_dir}/lc/chunk_{batch_idx}.pqt")
+    for name, dfs in lc_storage.items():
+        if dfs:
+            out_dir = f"{dataset_dir}/lc/{name}"
+            os.makedirs(out_dir, exist_ok=True)
+            pd.concat(dfs).to_parquet(f"{out_dir}/chunk_{batch_idx}.pqt")
 
     # Save Spots
     if spots:
@@ -417,7 +425,7 @@ def save_batch(batch_results, batch_idx, dataset_dir):
             pd.concat(dfs).to_parquet(f"{out_dir}/chunk_{batch_idx}.pqt")
     
     # Clean up
-    del lcs, spots, configs, spectra_storage
+    del lc_storage, spots, configs, spectra_storage
 
 
 def simulate_one(models_root,
@@ -446,14 +454,17 @@ def simulate_one(models_root,
         # Generate spot map
         sm.generate_spot_map(ndays=ndays)
 
-        # Create time array for sampling
-        t_sampling = np.linspace(0, ndays, int(ndays / freq_rate))
+        # Create time arrays for each photometric instrument based on cadences
+        t_dict = {}
+        for name, cad in zip(sm.photometry_names, sm.photometry_cadences):
+            n_points = int(ndays / cad)
+            t_dict[name] = np.linspace(0, ndays, n_points)
 
         # Compute forward model
-        sm.compute_forward(t=t_sampling)
+        sm.compute_forward(t=t_dict)
 
         # Extract results
-        lc = sm.results['lc']
+        lcs = sm.results['lcs']
         spectra = sm.results['spectra']
         wavelength = sm.results['wvp']
 
@@ -504,8 +515,9 @@ def simulate_one(models_root,
             'simulation_params': {
                 'num_days': ndays,
                 'num_spots': len(sm.spot_map),
-                'sampling_rate': freq_rate,
-                'num_points': len(t_sampling),
+                'photometry_instruments': sm.photometry_names,
+                'photometry_cadences': [float(c) for c in sm.photometry_cadences],
+                'num_points_per_instr': {name: len(t_i) for name, (t_i, f_i) in lcs.items()},
                 'evolution_law': 'gaussian',
                 'wavelength_range': [float(wavelength[0]), float(wavelength[-1])] if hasattr(wavelength, '__len__') and len(wavelength)>0 else [],
                 'n_spectra_epochs': int(sm.n_spectra_epochs),
@@ -518,7 +530,11 @@ def simulate_one(models_root,
         # Plot every Nth sample
         if idx % plot_every == 0:
             fig, axes = plt.subplots(2, 1, figsize=(22, 12))
-            axes[0].plot(t_sampling, lc)
+            # Plot the first light curve in the list
+            name0 = list(lcs.keys())[0]
+            t_plot, lc_plot = lcs[name0]
+            axes[0].plot(t_plot, lc_plot)
+            axes[0].set_title(f'Light Curve ({name0})', fontsize=20)
             axes[0].set_xlabel('Time [days]')
             axes[0].set_ylabel('Flux')
             axes[0].set_title('Light Curve')
@@ -546,8 +562,7 @@ def simulate_one(models_root,
         # Return data structure for batch saving
         return {
             'id': idx,
-            't': t_sampling,
-            'lc': lc,
+            'lcs': lcs, # Dictionary {name: (t, flux)}
             'spectra': spectra,
             'spots': sm.spot_map,
             'config': config

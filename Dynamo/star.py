@@ -81,6 +81,39 @@ class Star:
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
         
+        # Parse photometry configurations
+        photometry_names_str = self._get_config_value('general', 'photometry_names', str)
+        if photometry_names_str:
+            self.photometry_names = [s.strip() for s in photometry_names_str.split(',')]
+        else:
+            self.photometry_names = ['Kepler'] # Default
+            
+        photometry_filters_str = self._get_config_value('general', 'photometry_filters', str)
+        if photometry_filters_str:
+            self.photometry_filters = [s.strip() for s in photometry_filters_str.split(',')]
+        else:
+             self.photometry_filters = [self.filter_name]
+
+        photometry_cadences_str = self._get_config_value('general', 'photometry_cadences', str)
+        if photometry_cadences_str:
+            self.photometry_cadences = [float(s.strip()) for s in photometry_cadences_str.split(',')]
+        else:
+            self.photometry_cadences = [1/48] # Default 30 min
+             
+        # Broadcast filters/cadences if only one is given for multiple names
+        if len(self.photometry_filters) == 1 and len(self.photometry_names) > 1:
+            self.photometry_filters = self.photometry_filters * len(self.photometry_names)
+        if len(self.photometry_cadences) == 1 and len(self.photometry_names) > 1:
+            self.photometry_cadences = self.photometry_cadences * len(self.photometry_names)
+            
+        # Ensure name/filter/cadence lengths match
+        if not (len(self.photometry_names) == len(self.photometry_filters) == len(self.photometry_cadences)):
+            print("Warning: Photometry configuration lengths do not match. Truncating.")
+            min_len = min(len(self.photometry_names), len(self.photometry_filters), len(self.photometry_cadences))
+            self.photometry_names = self.photometry_names[:min_len]
+            self.photometry_filters = self.photometry_filters[:min_len]
+            self.photometry_cadences = self.photometry_cadences[:min_len]
+
         # Parse spectra configurations (names, resolutions, filters)
         spectra_names_str = self._get_config_value('general', 'spectra_names', str)
         self.spectra_names = [s.strip() for s in spectra_names_str.split(',')] if spectra_names_str else []
@@ -433,7 +466,19 @@ class Star:
         if t is None:
             sys.exit('Please provide a valid time in compute_forward(observables,t=time)')
 
-        self.obs_times = t
+        # Handle dictionary of time arrays for different cadences
+        if isinstance(t, dict):
+            self.photometry_times = t
+            # Create master time array of all unique times
+            all_times = set()
+            for instr_times in t.values():
+                for time_val in instr_times:
+                    all_times.add(time_val)
+            master_t = np.sort(np.array(list(all_times)))
+            self.obs_times = master_t
+        else:
+            self.obs_times = t
+            self.photometry_times = {name: t for name in self.photometry_names}
 
         Ngrid_in_ring, cos_centers, proj_area, phi, theta, vec_grid = self.get_theta_phi()
 
@@ -443,30 +488,39 @@ class Star:
         sini, wvp, spot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
             self, self.temperature_spot, self.logg, self.feh, wv_array=None
         )
-        # For LIGHT CURVES: Apply photometric filter and compute integrated flux
-        f_filt_lc = spectra.interpolate_filter(self, self.filter_name)
+        
+        # Pre-calculate components for each photometric instrument
+        photometry_components = {}
+        for i, name in enumerate(self.photometry_names):
+            f_name = self.photometry_filters[i]
+            f_filt_lc = spectra.interpolate_filter(self, f_name)
 
-        brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(
-            self, Ngrid_in_ring, sini, cos_centers, proj_area,
-            photo_flux, f_filt_lc, wvp, vsini=0.0
-        )
+            brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc_with_vsini(
+                self, Ngrid_in_ring, sini, cos_centers, proj_area,
+                photo_flux, f_filt_lc, wvp, vsini=0.0
+            )
 
-        brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(
-            self, Ngrid_in_ring, sini, cos_centers, proj_area,
-            spot_flux, f_filt_lc, wvp, vsini=0.0
-        )
+            brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc_with_vsini(
+                self, Ngrid_in_ring, sini, cos_centers, proj_area,
+                spot_flux, f_filt_lc, wvp, vsini=0.0
+            )
 
-        brigh_grid_fc, flx_fc = spectra.compute_immaculate_lc_with_vsini(
-            self, Ngrid_in_ring, sini, cos_centers, proj_area,
-            photo_flux, f_filt_lc, wvp, vsini=0.0
-        )
+            brigh_grid_fc, flx_fc = spectra.compute_immaculate_lc_with_vsini(
+                self, Ngrid_in_ring, sini, cos_centers, proj_area,
+                photo_flux, f_filt_lc, wvp, vsini=0.0
+            )
+            
+            photometry_components[name] = {
+                'brigh_grid_ph': brigh_grid_ph, 'brigh_grid_sp': brigh_grid_sp,
+                'brigh_grid_fc': brigh_grid_fc, 'flx_ph': flx_ph
+            }
 
         # Determine spectral epochs indices for EACH instrument
         instrument_indices = {} # {instrument_name: [list of indices]}
         all_idx_epochs = set()
         
         if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
-            n_times = len(t)
+            n_times = len(self.obs_times) # Use master_t length
             sampling_rate = self.obs_times[1] - self.obs_times[0] if len(self.obs_times) > 1 else 1.0
 
             for i, name in enumerate(self.spectra_names):
@@ -498,19 +552,70 @@ class Star:
         # Convert set back to sorted list for the rotator to process smoothly
         sorted_all_idx = sorted(list(all_idx_epochs))
         
+        # Aggregate ALL light curve data across all photometric filters
+        # We need to run the rotator once for EACH photometric instrument because they have different filters
+        # BUT we can optimize: the geometry (spots, coverage) is the same for all filters at a given time.
+        # Currently generate_rotating_photosphere_lc does everything. 
+        # I will modify it to handle multiple filters or just call it multiple times (geometry is cached/fast anyway)
+        
+        self.results['lcs'] = {} # {instrument: flux_array}
+        
         rotator = Rotator(self)
+        
+        # First rotation pass for first instrument to get spots/planet positions
+        name0 = self.photometry_names[0]
+        comp0 = photometry_components[name0]
         rot_res = rotator.generate_rotating_photosphere_lc(
             Ngrid_in_ring, proj_area, cos_centers,
-            brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
-            flx_ph, vec_grid, plot_map=self.plot_grid_map,
+            comp0['brigh_grid_ph'], comp0['brigh_grid_sp'], comp0['brigh_grid_fc'],
+            comp0['flx_ph'], vec_grid, plot_map=self.plot_grid_map,
             epoch_indices=sorted_all_idx if sorted_all_idx else None
         )
-        
+
         if len(rot_res) == 7:
-             spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl, epoch_coverage = rot_res
+             spots_positions, FLUX0, ff_ph, ff_sp, ff_fc, ff_pl, epoch_coverage = rot_res
         else:
-             spots_positions, FLUX, ff_ph, ff_sp, ff_fc, ff_pl = rot_res
+             spots_positions, FLUX0, ff_ph, ff_sp, ff_fc, ff_pl = rot_res
              epoch_coverage = {}
+
+        # Map master FLUX0 back to instrument 0 if cadences differ
+        if isinstance(t, dict):
+            idx0 = np.array([np.where(self.obs_times == t_val)[0][0] for t_val in t[name0]])
+            self.results['lcs'][name0] = (t[name0], FLUX0[idx0])
+        else:
+            self.results['lcs'][name0] = (self.obs_times, FLUX0)
+
+        # Loop through remaining instruments
+        for i in range(1, len(self.photometry_names)):
+            name = self.photometry_names[i]
+            comp = photometry_components[name]
+            
+            # We can re-use ff_sp, ff_pl etc to compute FLUX for other filters MUCH faster
+            # flux = ff_ph*flx_ph + ff_sp*flx_sp + ff_fc*flx_fc + ff_pl*flx_pl
+            # Wait, the ff_* from generate_rotating_photosphere_lc are percentages of AREA.
+            # The correct integration is:
+            # flux = (filling_ph * flx_ph + filling_sp * flx_sp + filling_fc * flx_fc + filling_pl * 0.0) / 100
+            # No, ff_pl is usually planet blocking so it's 0 flux.
+            
+            # Actually, let's just use the component immaculate fluxes directly if possible.
+            # It's safer to re-call generate_rotating_photosphere_lc for now to ensure all physics (limb dark etc) matches.
+            # Geometry is cached inside rotator if we implement it, but for 270 days it's fast.
+            
+            res_i = rotator.generate_rotating_photosphere_lc(
+                Ngrid_in_ring, proj_area, cos_centers,
+                comp['brigh_grid_ph'], comp['brigh_grid_sp'], comp['brigh_grid_fc'],
+                comp['flx_ph'], vec_grid, plot_map=0, # don't replot
+                epoch_indices=None # already got epoch_coverage
+            )
+            FLUX_i = res_i[1]
+            
+            if isinstance(t, dict):
+                idx_i = np.array([np.where(self.obs_times == t_val)[0][0] for t_val in t[name]])
+                self.results['lcs'][name] = (t[name], FLUX_i[idx_i])
+            else:
+                self.results['lcs'][name] = (self.obs_times, FLUX_i)
+
+        # Scale and Noise application
 
         # Scale flux by (R / d)^2
         # Constants
@@ -521,21 +626,23 @@ class Star:
         # Calculate scale factor
         scale_lc = (self.radius * R_SUN_CM) / (dist * PC_CM)
         
-        # Apply Global Flux Scaling (to get photon-count-like values)
-        # Factor 2.5e14 maps Sun@100pc (~10^-9) to ~1.5e5 counts (Kepler-like)
-        # Avoids float precision issues with excessively large scales (like 1e31)        
-        FLUX *= scale_lc**2
-        FLUX *= FLUX_SCALE
+        # Process all light curves (Scale + Noise)
+        for name, (t_instr, flux_instr) in self.results['lcs'].items():
+            # Apply Global Flux Scaling
+            flux_instr *= scale_lc**2
+            flux_instr *= FLUX_SCALE
 
-        # Apply Noise (CDPP in ppm)
-        if hasattr(self, 'cdpp') and self.cdpp > 0:
-            # Noise should be relative to the flux level
-            noise_sigma = (self.cdpp * 1e-6) * np.mean(FLUX)
-            noise = np.random.normal(0, noise_sigma, len(FLUX))
-            FLUX += noise
+            # Apply Noise (CDPP in ppm)
+            if hasattr(self, 'cdpp') and self.cdpp > 0:
+                noise_sigma = (self.cdpp * 1e-6) * np.mean(flux_instr)
+                noise = np.random.normal(0, noise_sigma, len(flux_instr))
+                flux_instr += noise
+            
+            self.results['lcs'][name] = (t_instr, flux_instr)
 
-        # EXPLICITLY SAVE THE SCALED FLUX TO RESULTS
-        self.results['lc'] = FLUX
+        # Legacy results['lc'] support (use first instrument)
+        self.results['lc'] = self.results['lcs'][self.photometry_names[0]][1]
+        self.results['time'] = self.results['lcs'][self.photometry_names[0]][0]
         self.results['wvp'] = wvp # Save wavelength array too if needed
         
         self.final_spots_positions = spots_positions
@@ -595,28 +702,23 @@ class Star:
                 else:
                     self.results['spectra'][name] = (wv_snap, np.array(epoch_fluxes))
 
-        # Store results
-        self.results['time'] = t
-        self.results['lc'] = FLUX
-        # self.results['spectra'] is now a dictionary
+        # Store filling factors and other auxiliary results
         self.results['ff_ph'] = ff_ph
         self.results['ff_sp'] = ff_sp
         self.results['ff_pl'] = ff_pl
         self.results['ff_fc'] = ff_fc
         self.results['flp'] = flx_ph
-        # Store full wavelength grid for metadata purposes (use copy to ensure persistence)
-        self.results['wvp'] = wvp.copy()
-
-
+        # self.results['wvp'] already set above
 
         # Calculate RV if planet present
+        # Use master obs_times for RV as well
         if self.simulate_planet:
             rvkepler = spectra.keplerian_orbit(
-                t, [self.planet_period, self.planet_semi_amplitude,
+                self.obs_times, [self.planet_period, self.planet_semi_amplitude,
                     self.planet_esinw, self.planet_ecosw, self.planet_transit_t0]
             )
         else:
-            rvkepler = np.zeros_like(t)
+            rvkepler = np.zeros_like(self.obs_times)
 
         self.results['rv'] = rvkepler
         return
