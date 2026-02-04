@@ -510,7 +510,8 @@ def simulate_one(models_root,
                 'wavelength_range': [float(wavelength[0]), float(wavelength[-1])] if hasattr(wavelength, '__len__') and len(wavelength)>0 else [],
                 'n_spectra_epochs': int(sm.n_spectra_epochs),
                 'spectra_cadence': float(sm.spectra_cadence),
-                'spectra_times': [float(t) for t in sm.results['spectra_times']] if 'spectra_times' in sm.results else [],
+                'spectra_times_per_instr': {name: [float(t) for t in times] 
+                                           for name, times in sm.results['spectra_times'].items()} if 'spectra_times' in sm.results else {},
             }
         }
 

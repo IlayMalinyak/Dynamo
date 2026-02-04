@@ -117,18 +117,32 @@ class Star:
             self.spectra_filters = self.spectra_filters[:min_len]
             self.spectra_ranges = self.spectra_ranges[:min_len] if len(self.spectra_ranges) >= min_len else self.spectra_ranges + [None]*(min_len - len(self.spectra_ranges))
  
-        # Epoch spectra parameters
-        self.n_spectra_epochs = self._get_config_value('general', 'n_spectra_epochs', int)
-        if self.n_spectra_epochs is None: self.n_spectra_epochs = 1
+        # Helper to parse comma-separated lists with broadcasting
+        def parse_spectra_list(section, key, dtype, default):
+            val_str = self._get_config_value(section, key, str)
+            if val_str is None or val_str.lower() == 'none':
+                return [default] * len(self.spectra_names)
+            
+            vals = [s.strip() for s in val_str.split(',')]
+            # Convert to correct dtype
+            try:
+                converted = [dtype(v) if v.lower() != 'none' else None for v in vals]
+            except:
+                converted = [default] * len(self.spectra_names)
+                
+            if len(converted) == 1:
+                return converted * len(self.spectra_names)
+            return converted
+
+        # Epoch spectra parameters (now per-instrument)
+        self.n_spectra_epochs_list = parse_spectra_list('general', 'n_spectra_epochs', int, 1)
+        self.spectra_cadence_list = parse_spectra_list('general', 'spectra_cadence', float, 1.0)
+        self.spectra_start_time_list = parse_spectra_list('general', 'spectra_start_time', float, None)
         
-        self.spectra_cadence = self._get_config_value('general', 'spectra_cadence', float)
-        if self.spectra_cadence is None: self.spectra_cadence = 1.0
-        
-        start_time_str = self._get_config_value('general', 'spectra_start_time', str)
-        if start_time_str is None or start_time_str.lower() == 'none':
-            self.spectra_start_time = None
-        else:
-            self.spectra_start_time = float(start_time_str)
+        # Legacy attributes for backward compatibility (using first element)
+        self.n_spectra_epochs = self.n_spectra_epochs_list[0] if self.n_spectra_epochs_list else 1
+        self.spectra_cadence = self.spectra_cadence_list[0] if self.spectra_cadence_list else 1.0
+        self.spectra_start_time = self.spectra_start_time_list[0] if self.spectra_start_time_list else None
 
     def _initialize_star_params(self):
         """Initialize star-related parameters."""
@@ -447,42 +461,49 @@ class Star:
             photo_flux, f_filt_lc, wvp, vsini=0.0
         )
 
-        # Determine spectral epochs indices before LC generation
-        idx_epochs = []
+        # Determine spectral epochs indices for EACH instrument
+        instrument_indices = {} # {instrument_name: [list of indices]}
+        all_idx_epochs = set()
+        
         if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
             n_times = len(t)
             sampling_rate = self.obs_times[1] - self.obs_times[0] if len(self.obs_times) > 1 else 1.0
 
-            if self.n_spectra_epochs > 1:
-                cadence_idx = int(round(self.spectra_cadence / sampling_rate))
+            for i, name in enumerate(self.spectra_names):
+                n_epochs = self.n_spectra_epochs_list[i]
+                cadence = self.spectra_cadence_list[i]
+                start_time = self.spectra_start_time_list[i]
+                
+                # Calculate indices for this instrument
+                cadence_idx = int(round(cadence / sampling_rate))
                 if cadence_idx < 1: cadence_idx = 1
-                total_span_idx = (self.n_spectra_epochs - 1) * cadence_idx
+                total_span_idx = (n_epochs - 1) * cadence_idx
 
-                if self.spectra_start_time is not None:
-                    start_idx = np.argmin(np.abs(self.obs_times - self.spectra_start_time))
-                    idx_epochs = [start_idx + i * cadence_idx for i in range(self.n_spectra_epochs)]
-                    if idx_epochs[-1] >= n_times:
-                        idx_epochs = [idx for idx in idx_epochs if idx < n_times]
+                if start_time is not None:
+                    start_idx = np.argmin(np.abs(self.obs_times - start_time))
+                    idx_instr = [start_idx + j * cadence_idx for j in range(n_epochs)]
+                    idx_instr = [idx for idx in idx_instr if idx < n_times]
                 else:
                     max_start_idx = n_times - total_span_idx - 1
                     if max_start_idx < 0:
-                        idx_epochs = [np.random.randint(0, n_times)]
+                        idx_instr = [np.random.randint(0, n_times)]
                     else:
                         start_idx = np.random.randint(0, max_start_idx + 1)
-                        idx_epochs = [start_idx + i * cadence_idx for i in range(self.n_spectra_epochs)]
-            else:
-                if self.spectra_start_time is not None:
-                    start_idx = np.argmin(np.abs(self.obs_times - self.spectra_start_time))
-                    idx_epochs = [start_idx]
-                else:
-                    idx_epochs = [np.random.randint(0, n_times)]
+                        idx_instr = [start_idx + j * cadence_idx for j in range(n_epochs)]
+                
+                instrument_indices[name] = idx_instr
+                for idx in idx_instr:
+                    all_idx_epochs.add(idx)
 
+        # Convert set back to sorted list for the rotator to process smoothly
+        sorted_all_idx = sorted(list(all_idx_epochs))
+        
         rotator = Rotator(self)
         rot_res = rotator.generate_rotating_photosphere_lc(
             Ngrid_in_ring, proj_area, cos_centers,
             brigh_grid_ph, brigh_grid_sp, brigh_grid_fc,
             flx_ph, vec_grid, plot_map=self.plot_grid_map,
-            epoch_indices=idx_epochs if idx_epochs else None
+            epoch_indices=sorted_all_idx if sorted_all_idx else None
         )
         
         if len(rot_res) == 7:
@@ -518,15 +539,18 @@ class Star:
         self.results['wvp'] = wvp # Save wavelength array too if needed
         
         self.final_spots_positions = spots_positions
-
+        
         # For SPECTRA: Loop through configured instruments
-        # Use the SAME Phoenix models, just with different resolutions/filters
         self.results['spectra'] = {} # Initialize as dictionary
+        self.results['spectra_times'] = {} # Store times per instrument
         
         if hasattr(self, 'spectra_names') and len(self.spectra_names) > 0:
-            self.results['spectra_times'] = self.obs_times[idx_epochs]
-            
             for i, name in enumerate(self.spectra_names):
+                idx_instr = instrument_indices.get(name, [])
+                if not idx_instr: continue
+                
+                self.results['spectra_times'][name] = self.obs_times[idx_instr]
+                
                 instrument_res = self.spectra_resolutions[i]
                 instrument_filter = self.spectra_filters[i]
                 instrument_range = self.spectra_ranges[i]
@@ -540,7 +564,7 @@ class Star:
                 
                 epoch_fluxes = []
                 wv_snap = wvp # Default
-                for idx in idx_epochs:
+                for idx in idx_instr:
                     coverage = epoch_coverage.get(idx)
                     if coverage is not None:
                         # Use advanced kernel integration
