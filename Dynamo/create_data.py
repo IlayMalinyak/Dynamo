@@ -28,6 +28,24 @@ M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
 
+def is_main_sequence(teff, logg):
+    """
+    Condition for dwarfs (Main Sequence) vs Giants from Ciardi et al. 2011.
+    Returns True if Dwarf, False if Giant.
+    """
+    thresh = np.zeros_like(teff)
+    
+    # Vectorized implementation
+    mask_hot = teff >= 6000
+    mask_cool = teff <= 4250
+    mask_mid = ~(mask_hot | mask_cool)
+    
+    thresh[mask_hot] = 3.5
+    thresh[mask_cool] = 4.0
+    thresh[mask_mid] = 5.2 - (2.8e-4 * teff[mask_mid])
+    
+    return logg >= thresh
+
 
 def generate_theta_with_linear_decay(ar, N):
     """
@@ -136,24 +154,54 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     cover = 10 ** np.random.uniform(low=-1, high=np.log10(3), size=Nlc)
     # tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
     tau_evol = np.random.normal(loc=6, scale=2, size=Nlc) # spots lifetime in units of period. The choise of this distribution is arbitrary
-    mask = tau_evol < 2
-    tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
+    # mask = tau_evol < 2
+    # tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
     diffrot_shear = np.random.uniform(0, 0.4, size=Nlc)
     mass = sample_kepler_imf(Nlc, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=Nlc)
     ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=Nlc)
+    
+    # Enforce Main Sequence constraint: Age < MS lifetime
+    # MS lifetime approx: 10 * (M/M_sun)^(-2.5) Gyr
+    # Approximation derived from Mass-Luminosity relation L ~ M^3.5 (e.g., Hansen, Kawaler, & Trimble, 2004)
+    ms_lifetime = 10.0 * (mass ** (-2.5))
+    
+    # Rejection sampling for evolved stars
+    max_attempts = 10
+    for attempt in range(max_attempts):
+         mask_evolved = ages > ms_lifetime
+         n_evolved = np.count_nonzero(mask_evolved)
+         
+         if n_evolved == 0:
+             break
+             
+         logger.info(f"Resampling {n_evolved} evolved stars (Attempt {attempt+1}/{max_attempts})")
+         
+         # Resample ages for evolved stars
+         new_ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n_evolved)
+         ages[mask_evolved] = new_ages
+    
+    # Final cleanup if any somehow still fail (clamp to lifetime - epsilon)
+    mask_evolved = ages > ms_lifetime
+    if np.any(mask_evolved):
+        logger.warning(f"Clamping {np.count_nonzero(mask_evolved)} stars to MS lifetime")
+        ages[mask_evolved] = ms_lifetime[mask_evolved] * 0.95
+
     ar = age_activity_relation(ages, saturation_age_gyr=0.2)
-    # theta_low = np.random.uniform(low=0, high=20, size=Nlc)
-    # theta_high = np.random.uniform(low=theta_low, high=40 * ar, size=Nlc)
     theta_low, theta_high = generate_theta_with_linear_decay(ar, Nlc)
     mask = theta_high > 90
     theta_high[mask] = np.random.uniform(40, 90, size=np.count_nonzero(mask))
+
+    # Interpolate stellar parameters
     interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='fastlaunch')
     convective_shift = np.random.normal(loc=1, scale=1, size=Nlc)
     teff = interp['Teff']
     logg = interp['logg']
+    
+    # Flag Main Sequence stars
+    is_ms = is_main_sequence(teff, logg)
     L = np.clip(interp['L'], a_min=None, a_max=1000)
     R = interp['R']
     if 'Prot' in interp.keys() and interp['Prot'] is not None:
@@ -218,6 +266,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     sims['planet_spin_orbit_angle'] = planet_params['spin_orbit_angle']
     sims['planet_transit_t0'] = planet_params['transit_t0']
     sims['planet_semi_amplitude'] = planet_params['semi_amplitude']
+    sims['main_seq'] = is_ms
 
 
     sims = pd.DataFrame.from_dict(sims)
@@ -243,10 +292,25 @@ def plot_distributions(sims, root, sim_name):
 
     # Plot each distribution
     for ax, (label, values) in zip(axes, sims.items()):
-        sns.histplot(values, kde=False, ax=ax, color="khaki", bins=40)
+        if values.dtype == bool:
+            # For boolean (main_seq), plot count bar chart with explicit labels and order
+            # False -> Giant, True -> Main Sequence
+            mapped_values = values.map({True: 'Main Sequence', False: 'Giant'})
+            counts = mapped_values.value_counts().reindex(['Giant', 'Main Sequence'], fill_value=0)
+            
+            sns.barplot(x=counts.index, y=counts.values, ax=ax, palette="coolwarm")
+            
+            # Annotate with percentages
+            total = len(values)
+            for i, count in enumerate(counts.values):
+                ax.text(i, count, f'{count}\n({count/total:.1%})', 
+                        ha='center', va='bottom', fontsize=16)
+            ax.set_ylim(0, total * 1.1)
+        else:
+            sns.histplot(values, kde=False, ax=ax, color="khaki", bins=40)
         ax.set_title(label, fontsize=20)
         ax.set_xlabel("")
-        ax.set_ylabel("Density")
+        ax.set_ylabel("Count")
 
     # Hide any unused subplots
     for ax in axes[len(sims.columns):]:
