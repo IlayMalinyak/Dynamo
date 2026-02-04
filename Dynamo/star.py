@@ -555,12 +555,8 @@ class Star:
                 instrument_filter = self.spectra_filters[i]
                 instrument_range = self.spectra_ranges[i]
                 
-                # Split range string "3000-9000" into (3000, 9000)
-                try:
-                    w_min, w_max = map(float, instrument_range.split('-'))
-                    w_range = (w_min, w_max)
-                except:
-                    w_range = (wvp[0], wvp[-1])
+                # Use pre-parsed range or default to full grid
+                w_range = instrument_range if instrument_range is not None else (wvp[0], wvp[-1])
                 
                 epoch_fluxes = []
                 wv_snap = wvp # Default
