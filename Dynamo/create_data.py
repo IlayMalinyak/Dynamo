@@ -545,8 +545,14 @@ def simulate_one(models_root,
             spectra_dict = sm.results['spectra']
             if isinstance(spectra_dict, dict) and len(spectra_dict) > 0:
                 for name, (wv, flx) in spectra_dict.items():
-                    # print("plotting spectra: ", name, ' wv min/max: ', wv.min(), wv.max(), ' flx min/max: ', flx.min(), flx.max())
-                    axes[1].plot(wv, flx, label=name, alpha=0.7)
+                    # Handle multiple epochs by plotting the first one
+                    if flx.ndim == 2:
+                        y_plot = flx[0]
+                        label_suffix = " (Epoch 0)"
+                    else:
+                        y_plot = flx
+                        label_suffix = ""
+                    axes[1].plot(wv, y_plot, label=f"{name}{label_suffix}", alpha=0.7)
                 axes[1].legend()
             else:
                  if wavelength is not None and spectra is not None:
