@@ -1,10 +1,20 @@
-# Dynamo
+<div align="center">
+  <img src="images/rotating_star.gif" alt="Dynamo Logo" width="200"/>
 
-## Towards realistic stellar obserables
+  # Dynamo
+  
+  **Towards realistic stellar observables**
+
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+  [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+</div>
+
+---
 
 ![Example](images/6.png)
 
-**Dynamo** is a Python package for simulating stellar light curves and spectra, combining detailed models of stellar evolution, surface activity, planetary transits, and noise. It is based on several exisiting open-source projects that were modified and combined to create stronger link between stellar evolution and stellar observables.
+**Dynamo** is a Python package for simulating stellar light curves and spectra, combining detailed models of stellar evolution, surface activity, planetary transits, and noise. It is based on several existing open-source projects that were modified and combined to create a stronger link between stellar evolution and stellar observables.
 
 ## Features
 
