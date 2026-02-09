@@ -7,5 +7,5 @@ numpy==2.0.2
 pandas==2.2.3
 scipy==1.15.2
 seaborn==0.13.2
-starsim==2.3.1
+# starsim==2.3.1
 tqdm==4.66.4

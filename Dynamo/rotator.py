@@ -55,9 +55,16 @@ class Rotator():
             typ = []  # type of grid, ph sp or fc
 
             if simulate_planet:
-                planet_pos = self.compute_planet_pos(t)  # compute the planet position at current time
+                all_planet_pos = self.compute_all_planet_positions(t)  # compute positions for all planets
             else:
-                planet_pos = [2.0, 0.0, 0.0]  # Position outside the star
+                all_planet_pos = np.zeros((0, 3))  # No planets
+            
+            # For backward compat with nbspectra, we still pass single planet_pos
+            # but compute total coverage from all planets
+            if len(all_planet_pos) > 0:
+                planet_pos = all_planet_pos[0]  # First planet for legacy code
+            else:
+                planet_pos = np.array([2.0, 0.0, 0.0])  # Position outside the star
 
             if self.star.spot_map.size == 0:
                 spot_pos = np.array([np.array([m.pi / 2, -m.pi, 0.0, 0.0])])
@@ -110,8 +117,12 @@ class Rotator():
                 if (dist - spot_pos[i, 2] * np.sqrt(1 + self.star.facular_area_ratio)) <= (np.pi / 2):
                     vis[i] = 1.0
 
-            if (planet_pos[0] - planet_pos[2] < 1):
-                vis[-1] = 1.0
+            # Check visibility based on ALL planets
+            if len(all_planet_pos) > 0:
+                for p_idx, ppos in enumerate(all_planet_pos):
+                    if (ppos[0] - ppos[2] < 1):
+                        vis[-1] = 1.0  # At least one planet is transiting
+                        break
 
             # Calculate flux
             try:
@@ -128,7 +139,7 @@ class Rotator():
                     flux[k], typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = \
                         nbspectra.loop_generate_rotating_lc_nb(
                             N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid,
-                            vec_spot, simulate_planet, planet_pos, brigh_grid_ph, brigh_grid_sp,
+                            vec_spot, simulate_planet, all_planet_pos, brigh_grid_ph, brigh_grid_sp,
                             brigh_grid_fc, flx_ph, vis)
 
                     # Check for non-finite values
@@ -334,41 +345,91 @@ class Rotator():
 
         return pos
 
-    def compute_planet_pos(self, t):
+    def compute_planet_pos(self, t, planet=None):
+        """Compute position of a single planet at time t.
+        
+        Args:
+            t: Time
+            planet: Optional planet dict. If None, uses self.star's first planet attributes.
+        
+        Returns:
+            Array [rho, theta, radius] - position in polar coords relative to star center
+        """
+        if planet is not None:
+            # Use provided planet dict
+            esinw = planet['esinw']
+            ecosw = planet['ecosw']
+            t0 = planet['transit_t0']
+            period = planet['period']
+            radius = planet['radius']
+            impact = planet['impact']
+            spin_orbit = planet['spin_orbit_angle']
+            # Calculate semi-major axis from period using Kepler's 3rd law
+            semi_major_axis = 4.2097 * period ** (2/3) * self.star.mass ** (1/3) / self.star.radius
+        else:
+            # Backward compat: use star's flat attributes
+            esinw = self.star.planet_esinw
+            ecosw = self.star.planet_ecosw
+            t0 = self.star.planet_transit_t0
+            period = self.star.planet_period
+            radius = self.star.planet_radius
+            impact = self.star.planet_impact_param
+            spin_orbit = self.star.planet_spin_orbit_angle
+            semi_major_axis = self.star.planet_semi_major_axis
 
-        if (self.star.planet_esinw == 0 and self.star.planet_ecosw == 0):
+        if (esinw == 0 and ecosw == 0):
             ecc = 0
             omega = 0
         else:
-            ecc = np.sqrt(self.star.planet_esinw ** 2 + self.star.planet_ecosw ** 2)
-            omega = np.arctan2(self.star.planet_esinw, self.star.planet_ecosw)
+            ecc = np.sqrt(esinw ** 2 + ecosw ** 2)
+            omega = np.arctan2(esinw, ecosw)
 
-        t_peri = nbspectra.Ttrans_2_Tperi(self.star.planet_transit_t0, self.star.planet_period, ecc, omega)
-        sinf, cosf = nbspectra.true_anomaly(t, self.star.planet_period, ecc, t_peri)
+        t_peri = nbspectra.Ttrans_2_Tperi(t0, period, ecc, omega)
+        sinf, cosf = nbspectra.true_anomaly(t, period, ecc, t_peri)
 
         cosftrueomega = cosf * np.cos(omega + np.pi / 2) - sinf * np.sin(
             omega + np.pi / 2)  # cos(f+w)=cos(f)*cos(w)-sin(f)*sin(w)
         sinftrueomega = cosf * np.sin(omega + np.pi / 2) + sinf * np.cos(
             omega + np.pi / 2)  # sin(f+w)=cos(f)*sin(w)+sin(f)*cos(w)
 
-        if cosftrueomega > 0.0: return np.array(
-            [1 + self.star.planet_radius * 2, 0.0, self.star.planet_radius])  # avoid secondary transits
+        if cosftrueomega > 0.0: 
+            return np.array([1 + radius * 2, 0.0, radius])  # avoid secondary transits
 
-        cosi = (self.star.planet_impact_param / self.star.planet_semi_major_axis) * (1 + self.star.planet_esinw) / (
+        cosi = (impact / semi_major_axis) * (1 + esinw) / (
                     1 - ecc ** 2)  # cosine of planet inclination (i=90 is transit)
 
-        rpl = self.star.planet_semi_major_axis * (1 - ecc ** 2) / (1 + ecc * cosf)
-        xpl = rpl * (-np.cos(self.star.planet_spin_orbit_angle) * sinftrueomega - np.sin(
-            self.star.planet_spin_orbit_angle) * cosftrueomega * cosi)
-        ypl = rpl * (np.sin(self.star.planet_spin_orbit_angle) * sinftrueomega - np.cos(
-            self.star.planet_spin_orbit_angle) * cosftrueomega * cosi)
+        rpl = semi_major_axis * (1 - ecc ** 2) / (1 + ecc * cosf)
+        xpl = rpl * (-np.cos(spin_orbit) * sinftrueomega - np.sin(
+            spin_orbit) * cosftrueomega * cosi)
+        ypl = rpl * (np.sin(spin_orbit) * sinftrueomega - np.cos(
+            spin_orbit) * cosftrueomega * cosi)
 
         rhopl = np.sqrt(ypl ** 2 + xpl ** 2)
         thpl = np.arctan2(ypl, xpl)
 
         pos = np.array(
-            [float(rhopl), float(thpl), self.star.planet_radius])  # rho, theta, and radii (in Rstar) of the planet
+            [float(rhopl), float(thpl), radius])  # rho, theta, and radii (in Rstar) of the planet
         return pos
+    
+    def compute_all_planet_positions(self, t):
+        """Compute positions for all planets at time t.
+        
+        Returns:
+            Array of shape (n_planets, 3) with [rho, theta, radius] for each planet.
+            Returns empty array (0, 3) if no planets.
+        """
+        if not hasattr(self.star, 'planets') or len(self.star.planets) == 0:
+            # Backward compat: check for single planet
+            if self.star.simulate_planet:
+                return np.array([self.compute_planet_pos(t)])
+            return np.zeros((0, 3))
+        
+        positions = []
+        for planet in self.star.planets:
+            pos = self.compute_planet_pos(t, planet)
+            positions.append(pos)
+        
+        return np.array(positions) if positions else np.zeros((0, 3))
 
     def plot_spot_map_grid(self, vec_grid, typ, inc, time):
         filename = self.star.path / 'plots' / 'map_t_{:.4f}.png'.format(time)

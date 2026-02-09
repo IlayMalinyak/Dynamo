@@ -258,6 +258,9 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     sims['Outlier Rate'] = outlier_rate
     sims['Flicker Time Scale'] = flicker
     sims['simulate_planet'] = planet_params['simulate_planet']
+    sims['n_planets'] = planet_params['n_planets']
+    sims['planets'] = planet_params['planets']  # List of planet dicts for each sample
+    # Backward compat flat arrays (from first planet if exists)
     sims['planet_period'] = planet_params['period']
     sims['planet_radius'] = planet_params['radius']
     sims['planet_esinw'] = planet_params['esinw']

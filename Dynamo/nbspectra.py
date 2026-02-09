@@ -228,7 +228,8 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
     simulate_planet : bool
         Whether to simulate a planet
     planet_pos : array
-        Planet position [distance, angle, radius]
+        Planet positions array of shape (n_planets, 3) with [rho, theta, radius] for each.
+        If no planets, should be empty array (0, 3).
     brigh_ph : array
         Brightness of photosphere for each ring
     brigh_sp : array
@@ -255,6 +256,10 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
 
     # Get indices of visible spots for efficient iteration
     vis_spots_idx = [i for i in range(len(vis) - 1) if vis[i] == 1.0]
+    
+    # Check if any planet is transiting
+    n_planets = planet_pos.shape[0] if planet_pos.ndim == 2 else 0
+    any_planet_visible = vis[-1] == 1.0 if n_planets > 0 else False
 
     # Initialize area fractions
     Aph = 0.0  # Total photosphere area
@@ -281,11 +286,12 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
         if ring_idx == 0:
             # Central grid (circle)
             grid_info = process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
-                                             width, simulate_planet, planet_pos, vis)
+                                             width, simulate_planet, planet_pos, any_planet_visible)
         else:
             # Other grids (square-like)
             grid_info = process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
-                                           width, simulate_planet, planet_pos, vis, ring_idx, cos_centers)
+                                           width, simulate_planet, planet_pos, cos_centers, ring_idx,
+                                           any_planet_visible)
 
         # Unpack grid coverage information
         aph, asp, afc, apl = grid_info
@@ -307,19 +313,19 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
 
 @nb.njit(cache=True)
 def process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
-                         width, simulate_planet, planet_pos, vis):
+                         width, simulate_planet, planets_pos, any_planet_visible):
     """
     Process the central grid element (circular).
 
     Returns:
     --------
     aph, asp, afc, apl : float
-        Area fractions of photosphere, spots, faculae, and planet
+        Area fractions of photosphere, spots, faculae, and planet(s)
     """
     # Initialize area fractions for this grid
     asp = 0.0  # Fraction covered by spots
     afc = 0.0  # Fraction covered by faculae
-    apl = 0.0  # Fraction covered by planet
+    apl = 0.0  # Fraction covered by planet(s)
 
     # Process spots and faculae
     for spot_idx in vis_spots_idx:
@@ -341,19 +347,23 @@ def process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
             # Facula area excludes the spot area
             afc += max(0.0, facula_coverage - asp)
 
-    # Process planet (if visible)
-    if simulate_planet and vis[-1] == 1.0:
-        # Calculate grid-planet distance
-        dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
-                      (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
-
+    # Process ALL planets (sum coverage)
+    n_planets = planets_pos.shape[0] if planets_pos.ndim == 2 else 0
+    if simulate_planet and any_planet_visible and n_planets > 0:
         width2 = 2 * m.sin(width / 2)
-        if dist > width2 / 2 + planet_pos[2]:
-            apl = 0.0
-        elif dist < planet_pos[2] - width2 / 2:
-            apl = 1.0
-        else:
-            apl = -(dist - planet_pos[2] - width2 / 2) / width2
+        for p_idx in range(n_planets):
+            planet_pos = planets_pos[p_idx]
+            # Calculate grid-planet distance
+            dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
+                          (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
+
+            if dist > width2 / 2 + planet_pos[2]:
+                apl_single = 0.0
+            elif dist < planet_pos[2] - width2 / 2:
+                apl_single = 1.0
+            else:
+                apl_single = -(dist - planet_pos[2] - width2 / 2) / width2
+            apl += apl_single
 
     # Apply constraints and adjust area fractions
     asp, afc, apl = adjust_area_fractions(asp, afc, apl)
@@ -366,19 +376,20 @@ def process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
 
 @nb.njit(cache=True)
 def process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
-                       width, simulate_planet, planet_pos, vis, ring_idx, cos_centers):
+                       width, simulate_planet, planets_pos, cos_centers, ring_idx,
+                       any_planet_visible):
     """
     Process grid elements in outer rings (square-like).
 
     Returns:
     --------
     aph, asp, afc, apl : float
-        Area fractions of photosphere, spots, faculae, and planet
+        Area fractions of photosphere, spots, faculae, and planet(s)
     """
     # Initialize area fractions for this grid
     asp = 0.0  # Fraction covered by spots
     afc = 0.0  # Fraction covered by faculae
-    apl = 0.0  # Fraction covered by planet
+    apl = 0.0  # Fraction covered by planet(s)
 
     # Process spots and faculae
     for spot_idx in vis_spots_idx:
@@ -400,19 +411,23 @@ def process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
             # Facula area excludes the spot area
             afc += max(0.0, facula_coverage - asp)
 
-    # Process planet (if visible)
-    if simulate_planet and vis[-1] == 1.0:
-        # Calculate grid-planet distance
-        dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
-                      (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
-
+    # Process ALL planets (sum coverage)
+    n_planets = planets_pos.shape[0] if planets_pos.ndim == 2 else 0
+    if simulate_planet and any_planet_visible and n_planets > 0:
         width2 = cos_centers[ring_idx] * width
-        if dist > width2 / 2 + planet_pos[2]:
-            apl = 0.0
-        elif dist < planet_pos[2] - width2 / 2:
-            apl = 1.0
-        else:
-            apl = -(dist - planet_pos[2] - width2 / 2) / width2
+        for p_idx in range(n_planets):
+            planet_pos = planets_pos[p_idx]
+            # Calculate grid-planet distance
+            dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
+                          (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
+
+            if dist > width2 / 2 + planet_pos[2]:
+                apl_single = 0.0
+            elif dist < planet_pos[2] - width2 / 2:
+                apl_single = 1.0
+            else:
+                apl_single = -(dist - planet_pos[2] - width2 / 2) / width2
+            apl += apl_single
 
     # Apply constraints and adjust area fractions
     asp, afc, apl = adjust_area_fractions(asp, afc, apl)

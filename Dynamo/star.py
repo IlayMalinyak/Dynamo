@@ -322,15 +322,53 @@ class Star:
 
 
     def set_planet_parameters(self, params_dict):
-        self.simulate_planet = params_dict['simulate_planet']
-        self.planet_period = params_dict['planet_period']
-        self.planet_transit_t0 = params_dict['planet_transit_t0']
-        self.planet_radius = params_dict['planet_radius']
-        self.planet_impact_param = params_dict['planet_impact']
-        self.planet_esinw = params_dict['planet_esinw']
-        self.planet_ecosw = params_dict['planet_ecosw']
-        self.planet_spin_orbit_angle = params_dict['planet_spin_orbit_angle']
-        self.planet_semi_amplitude = params_dict['planet_semi_amplitude']
+        """Set planet parameters from params_dict.
+        
+        Supports both new format (list of planet dicts in 'planets' key)
+        and old format (flat keys like 'planet_period', 'planet_radius', etc.).
+        """
+        # New format: list of planet dicts
+        if 'planets' in params_dict and isinstance(params_dict['planets'], list):
+            self.planets = params_dict['planets']
+        else:
+            # Old format: convert to new format for consistency
+            self.planets = []
+            if params_dict.get('simulate_planet', 0):
+                planet = {
+                    'period': params_dict['planet_period'],
+                    'transit_t0': params_dict['planet_transit_t0'],
+                    'radius': params_dict['planet_radius'],
+                    'impact': params_dict['planet_impact'],
+                    'esinw': params_dict['planet_esinw'],
+                    'ecosw': params_dict['planet_ecosw'],
+                    'spin_orbit_angle': params_dict['planet_spin_orbit_angle'],
+                    'semi_amplitude': params_dict['planet_semi_amplitude'],
+                }
+                self.planets.append(planet)
+        
+        self.n_planets = len(self.planets)
+        self.simulate_planet = 1 if self.n_planets > 0 else 0
+        
+        # For backward compatibility, also set flat attributes from first planet
+        if self.n_planets > 0:
+            p = self.planets[0]
+            self.planet_period = p['period']
+            self.planet_transit_t0 = p['transit_t0']
+            self.planet_radius = p['radius']
+            self.planet_impact_param = p['impact']
+            self.planet_esinw = p['esinw']
+            self.planet_ecosw = p['ecosw']
+            self.planet_spin_orbit_angle = p['spin_orbit_angle']
+            self.planet_semi_amplitude = p['semi_amplitude']
+        else:
+            self.planet_period = 0
+            self.planet_transit_t0 = 0
+            self.planet_radius = 0
+            self.planet_impact_param = 0
+            self.planet_esinw = 0
+            self.planet_ecosw = 0
+            self.planet_spin_orbit_angle = 0
+            self.planet_semi_amplitude = 0
 
 
     def generate_spot_map(self, ndays):
@@ -455,7 +493,8 @@ class Star:
 
 
     def compute_forward(self, t=None):
-        print(f"\ncomputing forward with: {len(self.spot_map)} spots and {int(self.simulate_planet)} planets")
+        n_pl = self.n_planets if hasattr(self, 'n_planets') else int(self.simulate_planet)
+        print(f"\ncomputing forward with: {len(self.spot_map)} spots and {n_pl} planets")
         # self.inclination = np.deg2rad(self.inclination) # REMOVED: Do not modify in-place
         self.tau_emerge = min(2, self.rotation_period * self.spots_decay_time / 10)
         self.tau_decay = max(self.rotation_period * self.spots_decay_time, 50)
@@ -710,9 +749,17 @@ class Star:
         self.results['flp'] = flx_ph
         # self.results['wvp'] already set above
 
-        # Calculate RV if planet present
+        # Calculate RV if planet(s) present - sum contributions from all planets
         # Use master obs_times for RV as well
-        if self.simulate_planet:
+        if hasattr(self, 'planets') and len(self.planets) > 0:
+            rvkepler = np.zeros_like(self.obs_times)
+            for planet in self.planets:
+                rvkepler += spectra.keplerian_orbit(
+                    self.obs_times, [planet['period'], planet['semi_amplitude'],
+                        planet['esinw'], planet['ecosw'], planet['transit_t0']]
+                )
+        elif self.simulate_planet:
+            # Backward compat: single planet from flat attributes
             rvkepler = spectra.keplerian_orbit(
                 self.obs_times, [self.planet_period, self.planet_semi_amplitude,
                     self.planet_esinw, self.planet_ecosw, self.planet_transit_t0]
