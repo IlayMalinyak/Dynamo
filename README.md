@@ -1,9 +1,8 @@
 <div align="center">
-  <img src="assets/Dynamo-icon.png" alt="Dynamo Icon" width="400"/>
-  <br>
-  <img src="images/rotating_star.gif" alt="Dynamo Logo" width="150"/>
 
   # Dynamo
+  <img src="assets/Dynamo-icon.png" alt="Dynamo Icon" width="400"/>
+  <br>
   
   **Towards realistic stellar observables**
 
