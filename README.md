@@ -1,5 +1,6 @@
 <div align="center">
-  <img src="images/rotating_star.gif" alt="Dynamo Logo" width="200"/>
+  <img src="assets/Dynamo-icon.png" alt="Dynamo Icon" width="150"/>
+  <img src="images/rotating_star.gif" alt="Dynamo Logo" width="150"/>
 
   # Dynamo
   
