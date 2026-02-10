@@ -81,12 +81,12 @@ The impact of `Dynamo` is twofold. First, it provides a powerful tool for simula
 
 # Figures
 
-![Exaple observables - Kepler and TESS lightcurves and LAMOST and APOGEE spectra](assets/example_plot_1.png)
+![Exaple observables - Kepler and TESS lightcurves and LAMOST and APOGEE spectra](../assets/example_plot_1.png)
 
-![Effect of multiple planets on lightcurve and RV](assets\multi_planet_test.png)
+![Effect of multiple planets on lightcurve and RV](../assets/multi_planet_test.png)
 
 # AI usage disclosure
-f
+
 Generative AI was used as assistance in this project. The main task used by AI was refactoring, documentations, debuging and tests. First, the core components were implemented manualy and AI was integerated in a later step. Every task done by AI was accompanied with tests to verify the expected result.
 
 # Acknowledgements
