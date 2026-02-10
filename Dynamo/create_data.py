@@ -295,12 +295,28 @@ def plot_distributions(sims, root, sim_name):
 
     # Plot each distribution
     for ax, (label, values) in zip(axes, sims.items()):
-        if values.dtype == bool:
-            # For boolean (main_seq), plot count bar chart with explicit labels and order
-            # False -> Giant, True -> Main Sequence
-            mapped_values = values.map({True: 'Main Sequence', False: 'Giant'})
-            counts = mapped_values.value_counts().reindex(['Giant', 'Main Sequence'], fill_value=0)
-            
+        if label == 'planets':
+            ax.axis("off")
+            continue
+        
+        if label == 'n_planets':
+            # Count the occurrences of each number of planets
+            counts = values.value_counts().sort_index()
+            sns.barplot(x=counts.index, y=counts.values, ax=ax, palette="mako")
+            ax.set_title("Number of Planets", fontsize=20)
+            # Add value labels on top of bars
+            for i, count in enumerate(counts.values):
+                ax.text(i, count, str(count), ha='center', va='bottom', fontsize=14)
+        elif values.dtype == bool or label == 'simulate_planet':
+            # For boolean or flags, plot bar chart
+            if values.dtype == bool:
+                mapped_values = values.map({True: 'Yes', False: 'No'})
+                order = ['No', 'Yes']
+            else:
+                mapped_values = values.map({1: 'Yes', 0: 'No'})
+                order = ['No', 'Yes']
+                
+            counts = mapped_values.value_counts().reindex(order, fill_value=0)
             sns.barplot(x=counts.index, y=counts.values, ax=ax, palette="coolwarm")
             
             # Annotate with percentages
@@ -310,7 +326,13 @@ def plot_distributions(sims, root, sim_name):
                         ha='center', va='bottom', fontsize=16)
             ax.set_ylim(0, total * 1.1)
         else:
-            sns.histplot(values, kde=False, ax=ax, color="khaki", bins=40)
+            # Handle empty or single-value columns that might crash histplot
+            if len(values.unique()) <= 1:
+                ax.text(0.5, 0.5, f"All values: {values.iloc[0]}", 
+                        ha='center', va='center', transform=ax.transAxes)
+            else:
+                sns.histplot(values, kde=False, ax=ax, color="khaki", bins=min(40, len(values.unique())))
+        
         ax.set_title(label, fontsize=20)
         ax.set_xlabel("")
         ax.set_ylabel("Count")
