@@ -72,7 +72,7 @@ The observables generation pipeline, primarily in `star.py` and `spectra.py`, tr
 
 5. **Planetary transits**: If a planet is configured, its orbital motion is computed and the planet disk blocks a fraction of the stellar surface at each time step, creating transit signatures in both photometry and spectroscopy (Rossiter-McLaughlin effect).
 
-Additionally, the `stellar_interpolator.py` module was designed to interpolate stellar parameters (radius, luminosity, rotation period) from evolutionary grids such as YREC or MIST, given mass, metallicity, alpha-enhancement, and age. This module uses the `kiauhoku` [@CClaytor2020_kiauhoku] interfaces and create the initial conditions for the main simulation, enables important links between stellar evolution and stellar surface and ensures that the observables are physically consistent.
+Additionally, the `stellar_interpolator.py` module was designed to interpolate stellar parameters (radius, luminosity, rotation period) from evolutionary grids such as YREC or MIST, given mass, metallicity, alpha-enhancement, and age. This module uses the `kiauhoku` [@Claytor2020_kiauhoku] interfaces and create the initial conditions for the main simulation, enables important links between stellar evolution and stellar surface and ensures that the observables are physically consistent.
 
 
 # Research impact statement
@@ -91,6 +91,6 @@ Generative AI was used as assistance in this project. The main task used by AI w
 
 # Acknowledgements
 
-We acknowledge the usage of exisiting codes from `Stasim` [@Herrero2016_starsim], `kiauhoku` [@CClaytor2020_kiauhoku], and `Butterpy` [@Claytor2023_butterpy] projects.
+We acknowledge the usage of exisiting codes from `Stasim` [@Herrero2016_starsim], `kiauhoku` [@Claytor2020_kiauhoku], and `Butterpy` [@Claytor2023_butterpy] projects.
 
 # References
