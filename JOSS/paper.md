@@ -91,6 +91,6 @@ Generative AI was used as assistance in this project. The main task used by AI w
 
 # Acknowledgements
 
-We acknowledge the usage of exisiting codes from `Stasim` [@Herrero2016_starsim], `kiauhoku` [@Claytor2020_kiauhoku], and `Butterpy` [@Claytor2023_butterpy] projects.
+We acknowledge the usage of exisiting codes from `Starsim` [@Herrero2016_starsim], `kiauhoku` [@Claytor2020_kiauhoku], and `Butterpy` [@Claytor2023_butterpy] projects.
 
 # References
