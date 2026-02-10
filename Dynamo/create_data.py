@@ -462,7 +462,8 @@ def simulate_one(models_root,
                  ndays=1000,
                  save=False, # Deprecated local save
                  plot_dir='images',
-                 plot_every=np.inf,):
+                 plot_every=np.inf,
+                 verbose=False):
     """
     Simulate a single star with spots and return data.
     """
@@ -472,6 +473,7 @@ def simulate_one(models_root,
     try:
         # Create StarSim object and set parameters
         sm = Star(conf_file_path='star.conf')
+        sm.verbose = verbose
         sm.set_stellar_parameters(sim_row)
         sm.set_planet_parameters(sim_row)
         sm.models_root = models_root
@@ -606,12 +608,13 @@ def simulate_one(models_root,
 
 def worker_function(args):
     """Worker function for multiprocessing."""
-    models_root, row_idx, row, sim_dir, logger, ndays, plot_dir, plot_every = args
+    models_root, row_idx, row, sim_dir, logger, ndays, plot_dir, plot_every, verbose = args
     try:
         return simulate_one(models_root, row, sim_dir,
                             idx=row_idx, logger=logger, ndays=ndays,
                             save=False, # Saving is now handled in batch
-                            plot_dir=plot_dir, plot_every=plot_every)
+                            plot_dir=plot_dir, plot_every=plot_every,
+                            verbose=verbose)
     except Exception as e:
         logger.error(f"Error in worker {row_idx}: {str(e)}", exc_info=True)
         return None
@@ -631,14 +634,16 @@ def main():
                         help='Create plots every N simulations (default: 100)')
     parser.add_argument('--num_simulations', type=int, default=1000,
                         help='Number of simulations to generate if not already existing (default: 1000)')
-    parser.add_argument('--ndays', type=int, default=270,
-                        help='Number of days to simulate (default: 1000)')
+    parser.add_argument('--ndays', type=int, default=27,
+                        help='Number of days to simulate (default: 27)')
     parser.add_argument('--n_cpu', type=float, default=1,
                         help='Number of CPU cores to use (default: 1)')
     parser.add_argument('--add_noise', action='store_true',
                         help='Add luminosity-dependent noise to light curves')
     parser.add_argument('--batch_size', type=int, default=100,
                         help='Number of simulations per saved file chunk (default: 100)')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Show per-sample progress bar during light curve generation')
 
     # Parse arguments
     args = parser.parse_args()
@@ -710,9 +715,12 @@ def main():
     num_cpus = max(1, int(args.n_cpu))
     logger.info(f"Using {num_cpus} CPU cores for parallel processing")
 
+    # Disable inner progress bar when using multiprocessing (bars conflict)
+    effective_verbose = args.verbose and num_cpus == 1
+
     # Prepare arguments for multiprocessing
     args_list = [(base_dir, i, row, args.dataset_dir, logger, args.ndays,
-                  args.plot_dir, args.plot_every,)
+                  args.plot_dir, args.plot_every, effective_verbose)
                  for i, row in sims.iterrows()]
 
     # Run simulations

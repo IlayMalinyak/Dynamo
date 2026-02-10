@@ -5,6 +5,7 @@ import sys
 import math as m
 import matplotlib.pyplot as plt
 import astropy.units as u
+from tqdm import tqdm
 
 D2S = 1*u.day.to(u.s)
 
@@ -51,7 +52,14 @@ class Rotator():
              # Store as dictionary mapping index to coverage array
              pass
 
-        for k, t in enumerate(self.star.obs_times):
+        verbose = getattr(self.star, 'verbose', True)
+        time_iter = enumerate(self.star.obs_times)
+        if verbose:
+            time_iter = tqdm(time_iter, total=len(self.star.obs_times),
+                           desc="LC generation",
+                           leave=False)
+
+        for k, t in time_iter:
             typ = []  # type of grid, ph sp or fc
 
             if simulate_planet:
