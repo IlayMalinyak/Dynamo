@@ -14,19 +14,12 @@ authors:
     affiliation: 1 
   - name: Hagai B. Perets
     orcid: 0000-0002-5004-199X
-    affiliation: "1, 3"
-  - name: Alex M. Bronstein
-    orcid: 0000-0001-9699-8730
-    affiliation: "2, 4"
+    affiliation: "1, 2"
 affiliations:
  - name: Physics Department, Technion -- Israel Institute of Technology, Haifa 32000, Israel
    index: 1
- - name: Computer Science Department, Technion -- Israel Institute of Technology, Haifa 32000, Israel
-   index: 2
  - name: ACRO, Open University of Israel, R'anana, Israel
-   index: 3
- - name: Institute of Science and Technology Austria, Klosterneuburg 3400, Austria
-   index: 4
+   index: 2
 date: 10 February 2026
 bibliography: paper.bib
 
