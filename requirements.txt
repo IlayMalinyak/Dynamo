@@ -1,11 +1,10 @@
-astropy==6.1.2
-emcee==3.0rc2
-kiauhoku==2.0.0
-matplotlib==3.10.1
-numba==0.60.0
-numpy==2.0.2
-pandas==2.2.3
-scipy==1.15.2
-seaborn==0.13.2
-# starsim==2.3.1
-tqdm==4.66.4
+numpy>=2.0
+pandas>=2.2
+matplotlib>=3.8
+scipy>=1.12
+seaborn>=0.13
+tqdm>=4.60
+astropy>=6.0
+numba>=0.60
+emcee>=3.0
+kiauhoku>=2.0

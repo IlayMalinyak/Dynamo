@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling<1.22"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,25 +8,30 @@ version = "0.1.0"
 description = "simulated stellar photometry and spectroscopy"
 authors = [{ name = "Ilay Kamai", email = "ilay.kamai@campus.technion.ac.il" }]
 license = {text = "MIT"}
-readme = "README.md"  # if you have one, otherwise remove this line
+readme = "README.md"
 requires-python = ">=3.8"
-dynamic = []
 dependencies = [
-    "numpy==2.2.3",
-    "pandas==2.2.3",
-    "matplotlib==3.10.1",
-    "scipy==1.15.2",
-    "seaborn==0.13.2",
-    "tqdm==4.66.4",
-    "astropy==6.1.2",
-    "numba>=0.60.0",
-    "emcee==3.0rc2",
-    "kiauhoku==2.0.0",
-    "starsim==2.3.1"
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+    "scipy>=1.12",
+    "seaborn>=0.13",
+    "tqdm>=4.60",
+    "astropy>=6.0",
+    "numba>=0.60",
+    "emcee>=3.0",
+    "kiauhoku>=2.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/IlayMalinyak/dynamo"
+Homepage = "https://github.com/IlayMalinyak/Dynamo"
 
-[tool.setuptools]
+[project.scripts]
+dynamo-sim = "Dynamo.create_data:main"
+
+[tool.hatch.build.targets.wheel]
 packages = ["Dynamo"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"Dynamo/star.conf" = "Dynamo/star.conf"
+"Dynamo/spotmap.dat" = "Dynamo/spotmap.dat"
