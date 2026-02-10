@@ -30,7 +30,7 @@ class Star:
     characteristics.
     """
 
-    def __init__(self, conf_file_path='starsim.conf'):
+    def __init__(self, conf_file_path='star.conf'):
         # Set up paths and configuration
         self.path = Path(__file__).parent
         self.conf_file_path = self.path / conf_file_path
@@ -142,7 +142,7 @@ class Star:
 
         # Validate configuration lengths
         if not (len(self.spectra_names) == len(self.spectra_resolutions) == len(self.spectra_filters)):
-            print("Warning: Spectra configuration names/resolutions/filters lengths do not match in starsim.conf")
+            print("Warning: Spectra configuration names/resolutions/filters lengths do not match in star.conf")
             # Handle mismatch gracefully
             min_len = min(len(self.spectra_names), len(self.spectra_resolutions), len(self.spectra_filters))
             self.spectra_names = self.spectra_names[:min_len]
@@ -790,7 +790,7 @@ class Star:
             sys.exit('Observable not valid. Use one of the following: lc, rv, bis, fwhm, contrast or crx')
 
         if wvmin == None and wvmax == None:
-            print('Wavelength range of the instrument not specified. Using the values in the file starsim.conf, ',
+            print('Wavelength range of the instrument not specified. Using the values in the file star.conf, ',
                   self.wavelength_lower_limit, 'and ', self.wavelength_upper_limit)
 
         if observable == 'lc' and filter_name == None:

@@ -471,7 +471,7 @@ def simulate_one(models_root,
     
     try:
         # Create StarSim object and set parameters
-        sm = Star(conf_file_path='starsim.conf')
+        sm = Star(conf_file_path='star.conf')
         sm.set_stellar_parameters(sim_row)
         sm.set_planet_parameters(sim_row)
         sm.models_root = models_root
@@ -655,13 +655,13 @@ def main():
     try:
         import configparser
         conf = configparser.ConfigParser()
-        conf.read('starsim.conf')
+        conf.read('star.conf')
         if conf.has_option('general', 'spectra_names'):
             specs = conf.get('general', 'spectra_names').split(',')
             for s in specs:
                 os.makedirs(f"{args.dataset_dir}/{s.strip()}", exist_ok=True)
     except Exception as e:
-        logger.warning(f"Could not parse starsim.conf to create spectra directories: {e}")
+        logger.warning(f"Could not parse star.conf to create spectra directories: {e}")
     os.makedirs('images', exist_ok=True)
 
     print(f"running create_data.py with {args.num_simulations} simulations and {args.n_cpu} CPU cores")

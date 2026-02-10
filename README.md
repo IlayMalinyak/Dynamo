@@ -45,13 +45,13 @@ Using **Dynamo** we can easily link between stellar evolution parameters (Temper
 
 ### Simulating a Star
 
-You can configure and run a stellar simulation by editing the `starsim.conf` file and using the main classes in the `Dynamo` package. Example:
+You can configure and run a stellar simulation by editing the `star.conf` file and using the main classes in the `Dynamo` package. Example:
 
 ```python
 from Dynamo.star import Star
 
 # Initialize a star from configuration
-star = Star(conf_file_path='starsim.conf')
+star = Star(conf_file_path='star.conf')
 
 # Set up simulation times and wavelength grid
 import numpy as np
@@ -96,7 +96,7 @@ this would create 1000 simulations of 1000 days each. The arguments are:
 
 ## Configuration
 
-Simulation parameters are controlled via the `starsim.conf` file, which includes sections for:
+Simulation parameters are controlled via the `star.conf` file, which includes sections for:
 
 - Stellar properties (mass, radius, temperature, rotation, etc.)
 - Spot and faculae properties (faculea are currently not supported)
@@ -104,7 +104,7 @@ Simulation parameters are controlled via the `starsim.conf` file, which includes
 - Planetary parameters
 - Noise characteristics
 
-See the comments in `starsim.conf` for detailed descriptions of each parameter.
+See the comments in `star.conf` for detailed descriptions of each parameter.
 
 ## License
 
