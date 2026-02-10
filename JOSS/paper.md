@@ -84,23 +84,7 @@ Additionally, the `stellar_interpolator.py` module was designed to interpolate s
 
 # Research impact statement
 
-The impact of `Dynamo`
-
-
-
-# Citations
-
-Citations to entries in paper.bib should be in
-[rMarkdown](http://rmarkdown.rstudio.com/authoring_bibliographies_and_citations.html)
-format.
-
-If you want to cite a software repository URL (e.g. something on GitHub without a preferred
-citation) then you can do it with the example BibTeX entry below for @fidgit.
-
-For a quick reference, the following citation commands can be used:
-- `@author:2001`  ->  "Author et al. (2001)"
-- `[@author:2001]` -> "(Author et al., 2001)"
-- `[@author1:2001; @author2:2001]` -> "(Author1 et al., 2001; Author2 et al., 2002)"
+The impact of `Dynamo` is twofold. First, it provides a powerful tool for simulating realistic stellar observables, which can be used for a wide range of scientific applications, such as testing machine learning models for stellar parameters predictions, solving inverse problems, and multimodal learning. Second, it provides a platform for researchers to explore the relationship between stellar evolution and stellar surface, creating hypotheses that can be tested observationally.
 
 # Figures
 
@@ -109,7 +93,7 @@ For a quick reference, the following citation commands can be used:
 ![Effect of multiple planets on lightcurve and RV](assets\multi_planet_test.png)
 
 # AI usage disclosure
-
+f
 Generative AI was used as assistance in this project. The main task used by AI was refactoring, documentations, debuging and tests. First, the core components were implemented manualy and AI was integerated in a later step. Every task done by AI was accompanied with tests to verify the expected result.
 
 # Acknowledgements
