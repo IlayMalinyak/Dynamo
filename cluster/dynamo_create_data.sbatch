@@ -62,11 +62,24 @@ if [ ! -f "${DYNAMO_DIR}/${DATASET_DIR}/simulation_properties.csv" ]; then
   exit 1
 fi
 
-# NO single quotes inside the srun payload (apptainer-oci wrapper mangles them)
-srun --ntasks=1 --cpu-bind=none --container="${SIF}" \
-  bash -lc "cd ${DYNAMO_DIR} || { echo [dynamo] ERROR: ${DYNAMO_DIR} not visible inside container on \$(hostname); exit 2; };  mkdir -p ${PLOT_DIR} && export PYTHONUNBUFFERED=1 MPLBACKEND=Agg NUMBA_NUM_THREADS=1 OMP_NUM_THREADS=1 && \
-            python3 -m Dynamo.create_data --dataset_dir ${DATASET_DIR} --plot_dir ${PLOT_DIR} --plot_every 50 \
-              --ndays ${NDAYS} --n_cpu ${NCPU} --batch_size ${ROWS} --start ${START} --stop ${STOP} --skip_download ${EXTRA}"
+# The l40s-public container (athena-post) does not get /home/ilay.kamai or /rg
+# mounted automatically, so bind them explicitly. Prefer a direct apptainer
+# exec (explicit --bind); fall back to the srun OCI wrapper + APPTAINER_BIND.
+BINDS="/home/ilay.kamai,/rg/perets_prj/ilay.kamai"
+# NO single quotes inside the payload (apptainer-oci wrapper mangles them)
+PAYLOAD="cd ${DYNAMO_DIR} || { echo [dynamo] ERROR: ${DYNAMO_DIR} not visible inside container; echo HOME=\$HOME; cat /proc/self/mountinfo | cut -d\  -f5 | sort -u | head -40; exit 2; }; \
+  mkdir -p ${PLOT_DIR} && export HOME=/home/ilay.kamai PYTHONUNBUFFERED=1 MPLBACKEND=Agg NUMBA_NUM_THREADS=1 OMP_NUM_THREADS=1 && \
+  python3 -m Dynamo.create_data --dataset_dir ${DATASET_DIR} --plot_dir ${PLOT_DIR} --plot_every 50 \
+    --ndays ${NDAYS} --n_cpu ${NCPU} --batch_size ${ROWS} --start ${START} --stop ${STOP} --skip_download ${EXTRA}"
+
+if command -v apptainer >/dev/null 2>&1; then
+  echo "[dynamo] launcher: apptainer exec --bind ${BINDS}"
+  apptainer exec --bind "${BINDS}" --env HOME=/home/ilay.kamai "${SIF}" bash -lc "${PAYLOAD}"
+else
+  echo "[dynamo] launcher: srun --container (APPTAINER_BIND=${BINDS})"
+  export APPTAINER_BIND="${BINDS}" SINGULARITY_BIND="${BINDS}"
+  srun --ntasks=1 --cpu-bind=none --container="${SIF}" bash -lc "${PAYLOAD}"
+fi
 rc=$?
 echo "[dynamo] create_data exit code ${rc}"
 exit ${rc}
