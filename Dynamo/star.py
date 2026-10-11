@@ -781,7 +781,9 @@ class Star:
                             spectra_filter_name=instrument_filter,
                             dist=getattr(self, 'distance', 10.0),
                             rad=self.radius,
-                            flux_scale=FLUX_SCALE
+                            flux_scale=FLUX_SCALE,
+                            hot_flux=self._hot_flux,
+                            facula_scale=self.facula_contrast_scale
                         )
                     else:
                         # Fallback to simple integration
@@ -794,7 +796,10 @@ class Star:
                             ff_planet=ff_pl[idx]/100.0,
                             dist=getattr(self, 'distance', 10.0),
                             rad=self.radius,
-                            flux_scale=FLUX_SCALE
+                            flux_scale=FLUX_SCALE,
+                            ff_fc=ff_fc[idx],
+                            hot_flux=self._hot_flux,
+                            facula_scale=self.facula_contrast_scale
                         )
                     epoch_fluxes.append(flux_snap)
                 

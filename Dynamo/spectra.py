@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 from scipy.interpolate import interp1d, UnivariateSpline
 import math as m
 from . import nbspectra
+from .contrasts import facula_weight_mu
 
 
 c = 299792.458  # km/s
@@ -422,7 +423,8 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
 def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sini, coverage,
                                    instrument_resolution=None, wavelength_range=None,
                                    resample=True, spectra_filter_name='None',
-                                   dist=None, rad=None, flux_scale=1.0):
+                                   dist=None, rad=None, flux_scale=1.0,
+                                   hot_flux=None, facula_scale=1.0):
     """
     Advanced spectral integration using velocity kernels to simulate RM effect and line profile variations.
     
@@ -432,6 +434,13 @@ def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sin
         Pixel-by-pixel coverage [aph, asp, afc, apl]
     mu_sini : 1D array
         Mu angles of Phoenix models
+    hot_flux : 2D array, optional
+        PHOENIX intensities of a model DT_FAC_REF hotter than the photosphere
+        (same mu/wavelength grid). Facular intensity at each mu is
+        I_ph + w(mu) * (I_hot - I_ph), w from the solar centre-to-limb law.
+        If None, facular pixels radiate like the photosphere.
+    facula_scale : float
+        Star-level multiplier of the facular contrast law.
     """
     import numpy as np
     from scipy import signal, interpolate
@@ -490,13 +499,19 @@ def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sin
         # Note: parea[ring_idx] is the projected area mu*area for one grid element in that ring
         area_pixels = parea[ring_indices[pixels_in_mu]]
         visible_photo = aph * (1.0 - apl) * area_pixels
-        visible_spot = (asp + afc) * (1.0 - apl) * area_pixels
+        visible_spot = asp * (1.0 - apl) * area_pixels
+        visible_fac = afc * (1.0 - apl) * area_pixels
+        if hot_flux is None:
+            # no facular model: facular pixels radiate like the photosphere
+            visible_photo = visible_photo + visible_fac
+            visible_fac = np.zeros_like(visible_fac)
         
         v_mu = v_pixels[pixels_in_mu]
         
         # Histogram into velocity kernels
         kernel_ph, _ = np.histogram(v_mu, bins=v_edges, weights=visible_photo)
         kernel_sp, _ = np.histogram(v_mu, bins=v_edges, weights=visible_spot)
+        kernel_fc, _ = np.histogram(v_mu, bins=v_edges, weights=visible_fac)
         
         # convolve photosphere intensity
         if np.sum(kernel_ph) > 0:
@@ -519,6 +534,14 @@ def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sin
             _, I_sp_log, _ = _resample_to_log_lambda(wv_array, I_sp, n=len(log_grid))
             conv_sp = signal.fftconvolve(I_sp_log, kernel_sp / (2.0 * np.pi), mode='same')
             total_spectrum_log += conv_sp
+
+        # convolve facular intensity
+        if np.sum(kernel_fc) > 0:
+            w = facula_weight_mu(mu_sini[mu_idx], facula_scale)
+            I_fc = photo_flux[mu_idx] + w * (hot_flux[mu_idx] - photo_flux[mu_idx])
+            _, I_fc_log, _ = _resample_to_log_lambda(wv_array, I_fc, n=len(log_grid))
+            conv_fc = signal.fftconvolve(I_fc_log, kernel_fc / (2.0 * np.pi), mode='same')
+            total_spectrum_log += conv_fc
 
     # Map back to original wavelength grid
     combined_spectrum = interp_back(total_spectrum_log)
@@ -557,9 +580,14 @@ def create_observed_spectra_kernel(star, wv_array, photo_flux, spot_flux, mu_sin
 def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
                           spectra_filter_name='None', wavelength_range=None, instrument_resolution=None, 
                           resample=True, ff_planet=0.0,
-                          dist=None, rad=None, flux_scale=1.0):
+                          dist=None, rad=None, flux_scale=1.0,
+                          ff_fc=0.0, hot_flux=None, facula_scale=1.0):
     """
     Create synthetic spectra using pre-computed Phoenix spectra.
+
+    Faculae (optional): `ff_fc` facular filling factor (percent) radiating the
+    disk-averaged facular spectrum built from `hot_flux` with the solar
+    centre-to-limb weights. Ignored when `hot_flux` is None.
 
     Parameters:
     -----------
@@ -599,12 +627,19 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     # Perform disk integration if not already done
     disk_integrated_photo = np.zeros(len(wv_array))
     disk_integrated_spot = np.zeros(len(wv_array))
+    disk_integrated_fac = np.zeros(len(wv_array))
+    fac_flux = None
+    if hot_flux is not None:
+        w_mu = facula_weight_mu(np.asarray(mu), facula_scale)[:, None]
+        fac_flux = photo_flux + w_mu * (hot_flux - photo_flux)
 
     # Sort mu in ascending order if needed
     if len(mu) > 1 and mu[0] > mu[-1]:
         mu = mu[::-1]
         photo_flux = photo_flux[::-1, :]
         spot_flux = spot_flux[::-1, :]
+        if fac_flux is not None:
+            fac_flux = fac_flux[::-1, :]
 
     # Proper disk integration: F = 2π ∫ I(μ) μ dμ
     for i in range(len(mu) - 1):
@@ -617,6 +652,9 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
                                   photo_flux[i + 1, :] * weight_i_plus_1)
         disk_integrated_spot += (spot_flux[i, :] * weight_i +
                                  spot_flux[i + 1, :] * weight_i_plus_1)
+        if fac_flux is not None:
+            disk_integrated_fac += (fac_flux[i, :] * weight_i +
+                                    fac_flux[i + 1, :] * weight_i_plus_1)
 
     # Combine photosphere and spots using fill factor
     # If ff_sp is an array (time series), we take the mean (legacy behavior)
@@ -626,8 +664,10 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     else:
         fill_factor = float(ff_sp) / 100
 
-    combined_spectrum = ((1 - fill_factor - ff_planet) * disk_integrated_photo +
-                         fill_factor * disk_integrated_spot)
+    fac_fill = (float(np.mean(ff_fc)) / 100) if fac_flux is not None else 0.0
+    combined_spectrum = ((1 - fill_factor - fac_fill - ff_planet) * disk_integrated_photo +
+                         fill_factor * disk_integrated_spot +
+                         fac_fill * disk_integrated_fac)
 
     # Scale flux by (R / d)^2 if distance and radius provided
     if dist is not None and rad is not None:

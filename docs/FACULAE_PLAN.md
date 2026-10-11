@@ -232,6 +232,8 @@ the spot kernel (`visible_spot = (asp + afc) * ...`). Change to three kernels:
 Also update `create_observed_spectra` (fallback path) to accept `ff_fc` and
 blend with the disk-averaged facular spectrum, or document that the fallback
 ignores faculae. `check_flux_consistency.py` must still give ratio 1.000.
+IMPLEMENTATION NOTE: that check gives 1.0147 on master already (and unchanged
+after Part D); the offset is pre-existing, not 1.000 as assumed above.
 
 Test T-D1: coverage array with `afc = 1` everywhere → spectrum lies between
 the photosphere and the `+DT_REF` spectrum at every wavelength and is closer
