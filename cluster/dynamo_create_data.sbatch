@@ -14,8 +14,11 @@
 #   sbatch --array=0-7 cluster/dynamo_create_data.sbatch dataset_faculae_smoke 1000
 #   sbatch --array=0-7 cluster/dynamo_create_data.sbatch dataset_faculae_smoke_noQ 1000
 #
-# athena-post is excluded: tasks there could not see the repo (cd failed on all
-# 16 tasks of the first submission).
+# l40s-public = athena-post only, which does not see /rg (cd failed on all 16
+# tasks of the first submission). So the job runs from a copy under /home:
+#   bash cluster/stage_run_dir.sh      # code (git HEAD) + dataset tables -> RUN_DIR
+#   sbatch --array=0-7 ...             # outputs land in RUN_DIR/DATASET_DIR
+#   bash cluster/stage_run_dir.sh --collect DATASET_DIR   # copy results back
 #
 # Uses the PHOENIX models already in ~/.dynamo (no downloads) and the same
 # container the code was developed/tested in (numba + kiauhoku in ~/.local).
@@ -25,9 +28,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --partition=l40s-shared
+#SBATCH --partition=l40s-public
 #SBATCH --qos=4h_0g
-#SBATCH --exclude=athena-post
 #SBATCH -t 04:00:00
 #SBATCH --output=/home/ilay.kamai/logs/%x-%A_%a.out
 #SBATCH --error=/home/ilay.kamai/logs/%x-%A_%a.err
@@ -35,7 +37,7 @@
 set -uo pipefail
 unset SLURM_TRES_PER_TASK SLURM_CPUS_PER_GPU 2>/dev/null || true
 
-DYNAMO_DIR="/rg/perets_prj/ilay.kamai/Dynamo"   # real path (~/work is a symlink to /rg/perets_prj/ilay.kamai)
+DYNAMO_DIR="${RUN_DIR:-/home/ilay.kamai/dynamo_run}"   # /home copy; athena-post cannot see /rg
 SIF="/apps/apptainer/images/pytorch/latest/torch2.7-tf2.20-cu128.sif"
 
 DATASET_DIR="${1:?usage: sbatch --array=0-K dynamo_create_data.sbatch DATASET_DIR [NDAYS] [ROWS] [EXTRA...]}"
