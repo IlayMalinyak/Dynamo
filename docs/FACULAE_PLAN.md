@@ -263,7 +263,7 @@ to the photosphere (mean weight ≈ 0.3).
       with faculae on (one extra PHOENIX interpolation + larger visible radii).
 - [ ] `simulation_properties.csv` carries: Seed, Has Dynamo, Spot Contrast Scale,
       Spot Max Area, Facula Q, Facula Contrast Scale, Facula Lifetime Ratio.
-- [ ] Smoke dataset numbers reported in `docs/faculae_smoke.md`.
+- [x] Smoke dataset numbers reported in `docs/faculae_smoke.md` (2026-10-12; verdict there).
 
 ## Known limitations to state in the docs (do not try to fix now)
 * Facular CLV law is solar; Teff dependence enters only via `Facula Contrast Scale`.

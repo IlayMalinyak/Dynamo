@@ -40,6 +40,15 @@ def md_table(df):
     return "\n".join(lines)
 
 
+def r_per(y, t, period):
+    """Kepler-style amplitude (McQuillan et al. 2013/2014 R_per): median over
+    windows of one rotation period of the 5-95% flux range, relative to the median."""
+    edges = np.arange(t[0], t[-1], period)
+    rng = [np.quantile(y[(t >= a) & (t < a + period)], .95) - np.quantile(y[(t >= a) & (t < a + period)], .05)
+           for a in edges if ((t >= a) & (t < a + period)).sum() > 10]
+    return np.median(rng) / np.median(y) if rng else np.nan
+
+
 def rot_band(x, t, period):
     """Rotational-timescale component: subtract a running mean over 3 rotations."""
     dt = np.median(np.diff(t))
@@ -77,6 +86,7 @@ def main():
             activity=act["activity_rate"], Q=act["facula_q"],
             amp_ppt=1e3 * (np.quantile(yq, .95) - np.quantile(yq, .05)) / np.median(yq),
             amp_spot_ppt=1e3 * (np.quantile(y0, .95) - np.quantile(y0, .05)) / np.median(y0),
+            rper_ppt=1e3 * r_per(yq, t, P), rper_spot_ppt=1e3 * r_per(y0, t, P),
             var_ratio=np.var(fac) / np.var(spot) if np.var(spot) > 0 else np.nan,
             rot_var_ratio=np.var(rf) / np.var(rs) if np.var(rs) > 0 else np.nan,
             mean_ff_sp=act["mean_ff_sp"], mean_ff_fc=act["mean_ff_fc"]))
@@ -89,14 +99,21 @@ def main():
                               median_var_ratio=g.var_ratio.median(), median_rot_var_ratio=g.rot_var_ratio.median(),
                               median_amp_ppt=g.amp_ppt.median()))
     out = []
-    q = d.amp_ppt.quantile([.05, .25, .5, .75, .95]).round(2)
-    q0 = d.amp_spot_ppt.quantile([.05, .25, .5, .75, .95]).round(2)
+    pct = [.05, .25, .5, .75, .95]
+    q = d.amp_ppt.quantile(pct).round(2)
+    q0 = d.amp_spot_ppt.quantile(pct).round(2)
+    qr = d.rper_ppt.quantile(pct).round(2)
+    qr0 = d.rper_spot_ppt.quantile(pct).round(2)
     out.append(f"# Faculae smoke dataset\n\nStars with a spot dynamo: {len(d)} (of {len(props)} simulated). "
                f"Kepler band, {int(np.ptp(t))} days, noise-free.\n")
-    out.append("## Amplitude (q95 - q05, ppt)\n\n| percentile | with faculae | spots only |\n|---|---|---|")
+    out.append("## Amplitude [ppt]\n\nFull: q95 - q05 over the whole light curve (includes cycle-scale "
+               "trends). R_per: median over one-period windows of the q95 - q05 range "
+               "(McQuillan et al. 2014 definition, comparable to Kepler).\n\n"
+               "| percentile | full, faculae | full, spots only | R_per, faculae | R_per, spots only |\n|---|---|---|---|---|")
     for p in q.index:
-        out.append(f"| {int(p*100)} | {q[p]} | {q0[p]} |")
-    out.append("\nKepler reference: median about 5 ppt with a long tail below 1 ppt (McQuillan et al. 2014).\n")
+        out.append(f"| {int(p*100)} | {q[p]} | {q0[p]} | {qr[p]} | {qr0[p]} |")
+    out.append("\nTarget (docs/FACULAE_PLAN.md A5): median 3-8 ppt, 5th percentile below 1 ppt. "
+               "Kepler reference: R_per median about 5 ppt with a long tail below 1 ppt (McQuillan et al. 2014).\n")
     by_p = d.assign(P_bin=pd.cut(d.period, [0, 15, 25, 1e3], labels=["P < 15 d", "15-25 d", "P > 25 d"])) \
         .groupby("P_bin", observed=True).apply(frac, include_groups=False)
     by_i = d.assign(i_bin=pd.cut(d.incl_deg, [0, 30, 60, 90.01], labels=["i < 30", "30-60", "60-90"])) \
