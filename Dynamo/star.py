@@ -365,6 +365,15 @@ class Star:
         Supports both new format (list of planet dicts in 'planets' key)
         and old format (flat keys like 'planet_period', 'planet_radius', etc.).
         """
+        # A table read back from CSV stores the planet list as its text repr
+        planets_val = params_dict.get('planets', None) if hasattr(params_dict, 'get') else None
+        if isinstance(planets_val, str) and planets_val.strip().startswith('['):
+            import ast
+            try:
+                params_dict = dict(params_dict)
+                params_dict['planets'] = ast.literal_eval(planets_val)
+            except (ValueError, SyntaxError):
+                pass
         # New format: list of planet dicts
         if 'planets' in params_dict and isinstance(params_dict['planets'], list):
             self.planets = params_dict['planets']

@@ -7,7 +7,7 @@ import os
 import json
 import logging
 import multiprocessing as mp
-from Dynamo.planet_params import generate_planet_parameters
+from Dynamo.planet_params import generate_planet_parameters, assign_spin_orbit_geometry, _create_flat_arrays
 from tqdm import tqdm
 from Dynamo.star import Star
 from Dynamo.imf import sample_kroupa_imf, sample_kepler_imf
@@ -256,6 +256,12 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     np.random.shuffle(diffrot_shear)
     omega = 2 * np.pi / prot  # rad / day
     planet_params = generate_planet_parameters(mass, R, planet_prob=0.1)
+    # Planet hosts: the stellar spin is drawn relative to the (transiting) orbit,
+    # so the stellar inclination follows from the true obliquity instead of
+    # being isotropic (see planet_params.assign_spin_orbit_geometry).
+    for k in np.where(planet_params['n_planets'] > 0)[0]:
+        incl[k] = assign_spin_orbit_geometry(teff[k], planet_params['planets'][k])
+    planet_params.update(_create_flat_arrays(planet_params['planets'], planet_params['n_planets'], Nlc))
 
     # Stitch this all together and write the simulation properties to file
     sims = {}
@@ -295,6 +301,8 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims['planet_spin_orbit_angle'] = planet_params['spin_orbit_angle']
     sims['planet_transit_t0'] = planet_params['transit_t0']
     sims['planet_semi_amplitude'] = planet_params['semi_amplitude']
+    sims['Obliquity'] = planet_params['obliquity']                    # true spin-orbit angle (rad), first planet
+    sims['planet_orbit_inclination'] = planet_params['orbit_inclination']
     sims['main_seq'] = is_ms
     sims['Has Dynamo'] = has_dynamo
     sims['Spot Contrast Scale'] = spot_contrast_scale
