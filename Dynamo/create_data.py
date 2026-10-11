@@ -621,43 +621,48 @@ def simulate_one(models_root,
             }
         }
 
-        # Plot every Nth sample
+        # Plot every Nth sample (a plotting failure must never drop the star)
         if idx % plot_every == 0:
-            fig, axes = plt.subplots(2, 1, figsize=(22, 12))
-            # Plot the first light curve in the list
-            name0 = list(lcs.keys())[0]
-            t_plot, lc_plot = lcs[name0]
-            axes[0].plot(t_plot, lc_plot)
-            axes[0].set_title(f'Light Curve ({name0})', fontsize=20)
-            axes[0].set_xlabel('Time [days]')
-            axes[0].set_ylabel('Flux')
-            axes[0].set_title('Light Curve')
+            try:
+                os.makedirs(plot_dir, exist_ok=True)
+                fig, axes = plt.subplots(2, 1, figsize=(22, 12))
+                # Plot the first light curve in the list
+                name0 = list(lcs.keys())[0]
+                t_plot, lc_plot = lcs[name0]
+                axes[0].plot(t_plot, lc_plot)
+                axes[0].set_title(f'Light Curve ({name0})', fontsize=20)
+                axes[0].set_xlabel('Time [days]')
+                axes[0].set_ylabel('Flux')
+                axes[0].set_title('Light Curve')
 
-            axes[1].set_title('Spectra')
+                axes[1].set_title('Spectra')
             
-            # Helper to plot spectra
-            spectra_dict = sm.results['spectra']
-            if isinstance(spectra_dict, dict) and len(spectra_dict) > 0:
-                for name, (wv, flx) in spectra_dict.items():
-                    # Handle multiple epochs by plotting the first one
-                    if flx.ndim == 2:
-                        y_plot = flx[0]
-                        label_suffix = " (Epoch 0)"
-                    else:
-                        y_plot = flx
-                        label_suffix = ""
-                    axes[1].plot(wv, y_plot, label=f"{name}{label_suffix}", alpha=0.7)
-                axes[1].legend()
-            else:
-                 if wavelength is not None and spectra is not None:
-                    axes[1].plot(wavelength, spectra)
+                # Helper to plot spectra
+                spectra_dict = sm.results['spectra']
+                if isinstance(spectra_dict, dict) and len(spectra_dict) > 0:
+                    for name, (wv, flx) in spectra_dict.items():
+                        # Handle multiple epochs by plotting the first one
+                        if flx.ndim == 2:
+                            y_plot = flx[0]
+                            label_suffix = " (Epoch 0)"
+                        else:
+                            y_plot = flx
+                            label_suffix = ""
+                        axes[1].plot(wv, y_plot, label=f"{name}{label_suffix}", alpha=0.7)
+                    axes[1].legend()
+                else:
+                     if wavelength is not None and spectra is not None:
+                        axes[1].plot(wavelength, spectra)
 
-            teff = float(sim_row['Teff'])
-            per = float(sim_row['Period'])
-            fig.suptitle(f'Sample {idx} | Teff: {teff:.0f} K | Period: {per:.2f} d')
-            plt.tight_layout()
-            plt.savefig(f'{plot_dir}/{idx}.png')
-            plt.close()
+                teff = float(sim_row['Teff'])
+                per = float(sim_row['Period'])
+                fig.suptitle(f'Sample {idx} | Teff: {teff:.0f} K | Period: {per:.2f} d')
+                plt.tight_layout()
+                plt.savefig(f'{plot_dir}/{idx}.png')
+                plt.close()
+            except Exception as e:
+                logger.warning(f"Plot for simulation {idx} failed: {e}")
+                plt.close('all')
 
         # Return data structure for batch saving
         return {
@@ -731,6 +736,7 @@ def main():
     os.makedirs(f"{args.dataset_dir}/lc", exist_ok=True)
     os.makedirs(f"{args.dataset_dir}/spots", exist_ok=True)
     os.makedirs(f"{args.dataset_dir}/configs", exist_ok=True)
+    os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs('images', exist_ok=True)
     
     # Create spectra directories based on config
