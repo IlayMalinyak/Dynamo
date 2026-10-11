@@ -380,10 +380,10 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
             # Handle edge cases properly
             if cos_centers[i] >= sini.max():
                 # Grid point at or beyond disk center, use most central Phoenix angle
-                dlp = flnp[-1]  # Assuming acd is sorted ascending
+                dlp = flnp[np.argmax(sini)]
             elif cos_centers[i] <= sini.min():
                 # Grid point at or beyond limb, use most limb Phoenix angle
-                dlp = flnp[0]   # Assuming acd is sorted ascending
+                dlp = flnp[np.argmin(sini)]
             else:
                 # Normal interpolation case
                 acd_below = sini[sini < cos_centers[i]]
@@ -398,7 +398,7 @@ def compute_immaculate_lc_with_vsini(star, Ngrid_in_ring, sini, cos_centers, pro
                 dlp = flnp[idx_low] + (flnp[idx_upp] - flnp[idx_low]) * (cos_centers[i] - acd_low) / (acd_upp - acd_low)
         else:
             # Use specified limb darkening law
-            dlp = flnp[0] * limb_darkening_law(star, cos_centers[i])
+            dlp = flnp[np.argmax(sini)] * limb_darkening_law(star, cos_centers[i])
 
         # Apply rotational broadening based on the vsini for this ring
         if vsini_rings[i] > 0:
@@ -853,9 +853,9 @@ def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area
         # Interpolate Phoenix intensity models to correct projected angle
         if star.use_phoenix_limb_darkening:
             if cos_centers[i] >= sini.max():
-                dlp = flnp[-1]
+                dlp = flnp[np.argmax(sini)]
             elif cos_centers[i] <= sini.min():
-                dlp = flnp[0]
+                dlp = flnp[np.argmin(sini)]
             else:
                 acd_below = sini[sini < cos_centers[i]]
                 acd_above = sini[sini >= cos_centers[i]]
@@ -866,7 +866,7 @@ def compute_immaculate_spectra(star, Ngrid_in_ring, sini, cos_centers, proj_area
                 dlp = flnp[idx_low] + (flnp[idx_upp] - flnp[idx_low]) * \
                       (cos_centers[i] - acd_low) / (acd_upp - acd_low)
         else:
-            dlp = flnp[0] * limb_darkening_law(star, cos_centers[i])
+            dlp = flnp[np.argmax(sini)] * limb_darkening_law(star, cos_centers[i])
 
         # 2. Integrate over the ring's azimuthal segments (phi angles)
         # Each segment has a different Doppler shift
@@ -1157,8 +1157,9 @@ def interpolate_Phoenix_mu_lc(star, temp, grav, wv_array=None, interp_type='line
     first_file = path / model_files['lowTlowg']
     phoenix_wavelength, amu, is_vacuum_wl, wave_type = get_wavelength_and_mu(first_file)
 
-    # Reverse mu_angles to match typical convention (disk center to limb)
-    amu = amu[::-1]
+    # NOTE: PHOENIX SpecInt stores mu ascending (limb -> centre) and the
+    # intensity rows in the same order. Do NOT reverse mu alone: that pairs
+    # each mu with the intensity from the opposite side of the disk.
 
 
     # Determine target wavelength array
@@ -1476,9 +1477,9 @@ def interpolate_Phoenix_mu_lc_with_metallicity(star, temp, grav, feh, wv_array=N
     # Get wavelength and mu data
     phoenix_wavelength, amu, is_vacuum_wl, wave_type = get_wavelength_and_mu(first_file)
 
-    # Reverse mu_angles if needed (verify based on your PHOENIX version)
-    if len(amu) > 1 and amu[0] < amu[-1]:
-        amu = amu[::-1]  # Ensure descending order (center to limb)
+    # NOTE: PHOENIX SpecInt stores mu ascending (limb -> centre) and the
+    # intensity rows in the same order. Do NOT reverse mu alone: that pairs
+    # each mu with the intensity from the opposite side of the disk.
 
     # Determine target wavelength array
     if wv_array is not None:
