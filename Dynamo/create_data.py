@@ -147,7 +147,8 @@ def calculate_cdpp(L, distance, Nlc):
     return cdpp
 
 
-def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0):
+def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0,
+                     q_activity_dep=False):
     """Generate simulation data and save distributions."""
     logger.info(f"Generating simulation data for {Nlc} light curves")
 
@@ -217,6 +218,16 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     # Teff relation) and maximum spot area in deg^2.
     spot_contrast_scale = truncated_normal_dist(1.0, 0.2, 0.5, 1.5, Nlc)
     spot_max_area = 10 ** np.random.uniform(np.log10(SPOT_AREA_MIN), np.log10(SPOT_AREA_MAX), Nlc)
+
+    # Faculae. Q = facular/spot area ratio, solar ~3 (Chapman et al. 1997).
+    # Optionally Q falls with activity (Shapiro et al. 2014): Q * ar^-0.3.
+    facula_q = 10 ** truncated_normal_dist(np.log10(3.0), 0.4, np.log10(0.3), np.log10(20.0), Nlc)
+    if q_activity_dep:
+        facula_q = np.clip(facula_q * np.clip(ar, 1e-3, None) ** (-0.3), 0.3, 20.0)
+    # multiplier of the solar facular centre-to-limb contrast law
+    facula_contrast_scale = truncated_normal_dist(1.0, 0.3, 0.3, 2.0, Nlc)
+    # facular decay time in units of the spot decay time
+    facula_lifetime_ratio = 10 ** np.random.uniform(np.log10(1.5), np.log10(5.0), Nlc)
     L = np.clip(interp['L'], a_min=None, a_max=1000)
     R = interp['R']
     if 'Prot' in interp.keys() and interp['Prot'] is not None:
@@ -289,6 +300,9 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims['Spot Contrast Scale'] = spot_contrast_scale
     sims['Spot Max Area'] = spot_max_area
     sims['Seed'] = np.arange(Nlc, dtype=np.int64) + int(base_seed)
+    sims['Facula Q'] = facula_q
+    sims['Facula Contrast Scale'] = facula_contrast_scale
+    sims['Facula Lifetime Ratio'] = facula_lifetime_ratio
 
 
     sims = pd.DataFrame.from_dict(sims)
@@ -313,6 +327,9 @@ def check_simdata(sims):
     assert (sims['Spot Max'] > sims['Spot Min']).all(), "Spot Max <= Spot Min"
     assert (sims['Period'] > 0).all(), "non-positive rotation period"
     assert (sims['Spot Max Area'] > 0).all(), "non-positive spot area"
+    assert sims['Facula Q'].between(0.3, 20.0).all(), "Facula Q out of [0.3, 20]"
+    assert sims['Facula Contrast Scale'].between(0.3, 2.0).all(), "facular contrast scale out of range"
+    assert sims['Facula Lifetime Ratio'].between(1.5, 5.0).all(), "facular lifetime ratio out of range"
 
 
 def plot_distributions(sims, root, sim_name):
@@ -686,6 +703,8 @@ def main():
                         help='Number of simulations per saved file chunk (default: 100)')
     parser.add_argument('--base_seed', type=int, default=0,
                         help='Offset added to the per-star seed (Seed = index + base_seed)')
+    parser.add_argument('--q_activity_dep', action='store_true',
+                        help='Make the facular area ratio Q decrease with activity (Q * ar^-0.3)')
     parser.add_argument('--verbose', action='store_true',
                         help='Show per-sample progress bar during light curve generation')
 
@@ -734,7 +753,8 @@ def main():
         logger.info(f"Generating {args.num_simulations} simulations.")
         np.random.seed(args.base_seed)
         sims = generate_simdata(args.dataset_dir, args.num_simulations, logger,
-                                add_noise=args.add_noise, base_seed=args.base_seed)
+                                add_noise=args.add_noise, base_seed=args.base_seed,
+                                q_activity_dep=args.q_activity_dep)
     
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())

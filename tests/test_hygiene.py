@@ -51,3 +51,21 @@ def test_spot_contrast():
     assert abs(s.spot_T_contrast - spot_contrast_berdyugina(5800)) < 1e-6
     cool = make_star(Teff=3000.0, **{"Spot Contrast Scale": 1.5})
     assert cool.temperature_spot >= 2300.0
+
+
+def test_C1_facular_priors():
+    import os
+    from Dynamo.create_data import generate_simdata
+    np.random.seed(1)
+    with tempfile.TemporaryDirectory() as d:
+        sims = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1")
+        assert os.path.exists(os.path.join(d, "c1_distributions.png"))
+        dep = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1b", q_activity_dep=True)
+    assert sims["Facula Q"].between(0.3, 20).all()
+    assert 2.0 < sims["Facula Q"].median() < 4.5
+    assert sims["Facula Contrast Scale"].between(0.3, 2.0).all()
+    assert sims["Facula Lifetime Ratio"].between(1.5, 5.0).all()
+    # activity dependence: Q anti-correlates with activity
+    from scipy.stats import spearmanr
+    act = dep["Has Dynamo"]
+    assert spearmanr(dep.loc[act, "Activity Rate"], dep.loc[act, "Facula Q"]).correlation < -0.1
