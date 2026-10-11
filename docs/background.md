@@ -32,9 +32,10 @@ Convective background is tapered to zero above ~7000 K.
 ## Not modelled
 
 δ Sct / γ Dor pulsations of hot stars, mixed l = 1 modes of red giants, Kepler
-systematics (quarters, safe modes; `Dynamo/noise.py` has an unused version), spot
-activity of giants (a change to the simulation itself, not a background), and
-intrinsic scatter around the scaling relations.
+systematics (quarters, safe modes; `Dynamo/noise.py` has an unused version) and
+intrinsic scatter around the scaling relations. Spot activity of evolved stars is in
+the simulation itself: subgiants always have a dynamo, 3% of giants are active
+(`create_data.py`: GIANT_LOGG, P_ACTIVE_GIANT, ACTIVE_GIANT_AR).
 
     python scripts/add_background.py DATASET --instrument Kepler [--realizations N]
     python scripts/background_validation.py DATASET/simulation_properties.csv

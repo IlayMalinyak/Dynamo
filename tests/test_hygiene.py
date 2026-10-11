@@ -30,7 +30,12 @@ def test_simdata_bounds():
     assert (sims["Cycle Length"] > 0).all() and (sims["Decay Time"] >= 1.5).all()
     assert sims["Seed"].is_unique and sims["Seed"].min() == 7
     assert not sims.loc[sims.Teff > 7000, "Has Dynamo"].any()
-    assert not sims.loc[~sims.main_seq, "Has Dynamo"].any()
+    hot = sims.Teff > 7000
+    giant = sims["Evolutionary Class"] == "giant"
+    assert (sims.loc[~hot & ~giant, "Has Dynamo"]).all()            # cool dwarfs + subgiants
+    assert (sims.loc[giant, "Has Dynamo"] == sims.loc[giant, "Active Giant"] & ~hot[giant]).all()
+    assert (sims.loc[~sims["Has Dynamo"], "Activity Rate"] == 0).all()
+    assert (sims.loc[sims["Has Dynamo"], "Activity Rate"] > 0).all()
 
 
 @pytest.mark.skipif(not have_phoenix(), reason="PHOENIX SpecInt models not installed")

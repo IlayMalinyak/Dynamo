@@ -30,6 +30,14 @@ MIN_T = 2500
 # Range of the per-star maximum spot area (deg^2), sampled log-uniformly.
 SPOT_AREA_MIN = 3.0
 SPOT_AREA_MAX = 50.0
+# Evolved stars. Subgiants (not main sequence, logg >= GIANT_LOGG) keep a dynamo with
+# the age-activity level; of the giants only a fraction is active (spun-up stars,
+# ~2% of Kepler red giants show rotational modulation, Ceillier et al. 2017), with
+# activity drawn log-uniform in ACTIVE_GIANT_AR (MS median ~7).
+GIANT_LOGG = 3.5
+P_ACTIVE_GIANT = 0.03
+ACTIVE_GIANT_AR = (1.0, 30.0)
+DYNAMO_TEFF_MAX = 7000.0
 
 def is_main_sequence(teff, logg):
     """
@@ -210,8 +218,16 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     # Flag Main Sequence stars
     is_ms = is_main_sequence(teff, logg)
 
-    # Stars without a spot dynamo: hot (thin/no convective envelope) or evolved.
-    has_dynamo = (teff <= 7000) & is_ms
+    # Spot dynamo: cool (convective envelope) dwarfs and subgiants, plus a small
+    # active fraction of giants. Separate generator so the other draws of a table
+    # do not depend on this choice.
+    rng_evo = np.random.default_rng([int(base_seed), 31])
+    evo_class = np.where(is_ms, 'dwarf', np.where(logg >= GIANT_LOGG, 'subgiant', 'giant'))
+    u_active = rng_evo.uniform(size=Nlc)
+    ar_giant = 10 ** rng_evo.uniform(np.log10(ACTIVE_GIANT_AR[0]), np.log10(ACTIVE_GIANT_AR[1]), Nlc)
+    active_giant = (evo_class == 'giant') & (u_active < P_ACTIVE_GIANT)
+    has_dynamo = (teff <= DYNAMO_TEFF_MAX) & ((evo_class != 'giant') | active_giant)
+    ar = np.where(active_giant, ar_giant, ar)
     ar = np.where(has_dynamo, ar, 0.0)
 
     # Per-star spot temperature-contrast scale (multiplies the Berdyugina 2005
@@ -305,6 +321,8 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims['planet_orbit_inclination'] = planet_params['orbit_inclination']
     sims['main_seq'] = is_ms
     sims['Has Dynamo'] = has_dynamo
+    sims['Evolutionary Class'] = evo_class
+    sims['Active Giant'] = active_giant
     sims['Spot Contrast Scale'] = spot_contrast_scale
     sims['Spot Max Area'] = spot_max_area
     sims['Seed'] = np.arange(Nlc, dtype=np.int64) + int(base_seed)
