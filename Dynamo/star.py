@@ -13,9 +13,15 @@ from . rotator import Rotator
 from . import noise
 from . import spots
 from . import spectra
-from .contrasts import spot_contrast_berdyugina, T_PHOENIX_MIN
+from .contrasts import spot_contrast_berdyugina, facula_weight_mu, T_PHOENIX_MIN, DT_FAC_REF
 
 FLUX_SCALE = 1e26
+
+# Spot map layout: [t_emerge, duration, colatitude, longitude, radius coeffs (4-13),
+# facular area ratio (14), facular decay time in days (15)].
+SPOT_MAP_NCOLS = 16
+FACULA_Q_COL = 14
+FACULA_TAU_COL = 15
 
 
 # initialize numba
@@ -203,6 +209,12 @@ class Star:
         }
         for param, type_conv in star_params.items():
             setattr(self, param, self._get_config_value('star', param, type_conv))
+        # Faculae: star-level multiplier of the solar centre-to-limb contrast law,
+        # and facular decay time in units of the spot decay time.
+        self.facula_contrast_scale = self._get_optional('star', 'facula_contrast_scale', float, 1.0)
+        self.facula_lifetime_ratio = self._get_optional('star', 'facula_lifetime_ratio', float, 3.0)
+        if self.facular_area_ratio is None:
+            self.facular_area_ratio = 0.0
         
         # Initialize spot_T_contrast explicitly if not set, using the average of min/max from config
         if not hasattr(self, 'spot_T_contrast'):
@@ -268,10 +280,6 @@ class Star:
     @property
     def temperature_spot(self):
         return self.temperature_photosphere - self.spot_T_contrast
-
-    @property
-    def temperature_facula(self):
-        return self.temperature_photosphere + self.facula_T_contrast
 
     @property
     def vsini(self):
@@ -340,6 +348,10 @@ class Star:
         self.has_dynamo = bool(params_dict.get('Has Dynamo', True))
         if 'Spot Max Area' in params_dict:
             self.spot_max_area = float(params_dict['Spot Max Area'])
+        # Faculae (defaults: values from star.conf)
+        self.facular_area_ratio = float(params_dict.get('Facula Q', self.facular_area_ratio))
+        self.facula_contrast_scale = float(params_dict.get('Facula Contrast Scale', self.facula_contrast_scale))
+        self.facula_lifetime_ratio = float(params_dict.get('Facula Lifetime Ratio', self.facula_lifetime_ratio))
 
 
     def set_planet_parameters(self, params_dict):
@@ -403,7 +415,7 @@ class Star:
 
         if not getattr(self, 'has_dynamo', True):
             # No spot dynamo (hot or evolved star): immaculate surface.
-            self.spot_map = np.zeros((0, 14))
+            self.spot_map = np.zeros((0, SPOT_MAP_NCOLS))
             self.reference_time = 0
             self.n_grid_rings = 20
             return
@@ -422,13 +434,20 @@ class Star:
         ref_time = regions[0]['nday'] if len(regions) > 0 else 0
         regions['nday'] -= ref_time
         self.reference_time = 0
-        spots_config = np.zeros((len(regions), 14))
+        spots_config = np.zeros((len(regions), SPOT_MAP_NCOLS))
         spots_config[:, 0] = regions['nday']
         spots_duration = max(self.spots_decay_time * self.rotation_period, 50)
         spots_config[:, 1] = spots_duration * np.ones(len(spots_config))
         spots_config[:, 2] = np.rad2deg((regions['thpos'] + regions['thneg']) / 2)
         spots_config[:, 3] = np.rad2deg((regions['phpos'] + regions['phneg']) / 2)
         spots_config[:, 4] = np.sqrt(regions['bmax']) # bmax is proportional to area (radius ** 2)
+        # Faculae: per-spot area ratio (lognormal scatter around Q) and facular
+        # decay time (spot decay time x facula_lifetime_ratio). Columns 4-13 are
+        # reserved for the radius-evolution coefficients of the other laws.
+        if self.facular_area_ratio > 0 and len(spots_config) > 0:
+            spots_config[:, FACULA_Q_COL] = self.facular_area_ratio * np.random.lognormal(0.0, 0.3, len(spots_config))
+            tau_decay = max(self.rotation_period * self.spots_decay_time, 50)
+            spots_config[:, FACULA_TAU_COL] = tau_decay * self.facula_lifetime_ratio
         self.spot_map = spots_config
         if len(spots_config) > 0:
             recommended_n = 120 / (spots_config[:, 4].min())
@@ -555,6 +574,18 @@ class Star:
         sini, wvp, spot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
             self, self.temperature_spot, self.logg, self.feh, wv_array=None
         )
+        # Faculae: intensity of a model DT_FAC_REF hotter than the photosphere;
+        # facular intensity at each mu is a blend weighted by the solar
+        # centre-to-limb contrast law (Meunier et al. 2010).
+        use_faculae = self.facular_area_ratio > 0 and len(self.spot_map) > 0
+        if use_faculae:
+            _, _, hot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(
+                self, self.temperature_photosphere + DT_FAC_REF, self.logg, self.feh, wv_array=None
+            )
+            fac_weights = facula_weight_mu(np.asarray(cos_centers), self.facula_contrast_scale)
+        else:
+            hot_flux = None
+        self._hot_flux = hot_flux
         
         # Pre-calculate components for each photometric instrument
         photometry_components = {}
@@ -572,10 +603,14 @@ class Star:
                 spot_flux, f_filt_lc, wvp, vsini=0.0
             )
 
-            brigh_grid_fc, flx_fc = spectra.compute_immaculate_lc_with_vsini(
-                self, Ngrid_in_ring, sini, cos_centers, proj_area,
-                photo_flux, f_filt_lc, wvp, vsini=0.0
-            )
+            if use_faculae:
+                brigh_grid_hot, _ = spectra.compute_immaculate_lc_with_vsini(
+                    self, Ngrid_in_ring, sini, cos_centers, proj_area,
+                    hot_flux, f_filt_lc, wvp, vsini=0.0
+                )
+                brigh_grid_fc = brigh_grid_ph + fac_weights * (brigh_grid_hot - brigh_grid_ph)
+            else:
+                brigh_grid_fc = brigh_grid_ph.copy()
             
             photometry_components[name] = {
                 'brigh_grid_ph': brigh_grid_ph, 'brigh_grid_sp': brigh_grid_sp,

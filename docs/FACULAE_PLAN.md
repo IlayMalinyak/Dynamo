@@ -19,6 +19,14 @@ Conventions used in the code and kept here:
 
 ---------------------------------------------------------------------------
 
+## Part 0 — pre-existing bug found during implementation (FIXED, commit 4035b2e)
+The PHOENIX SpecInt loaders reversed the mu labels but not the intensity rows,
+so every mu was paired with the intensity from the other side of the disk; the
+light-curve integrator compensated only for the central element. A 5 deg spot
+gave an 18-78% dip at disk centre (grid dependent) and almost no signal
+elsewhere. All light curves (and spectra) generated before this fix are wrong.
+The T-B0 reference is therefore master + this fix, not plain master.
+
 ## Part A — hygiene (must be done first; no new physics)
 
 ### A1. Per-star random seed
@@ -125,12 +133,15 @@ If `self.facular_area_ratio == 0` skip steps 1–3 and set `brigh_grid_fc = brig
 (fast path, identical to current behaviour).
 
 ### B3. Facular geometry and lifetime per spot
-Spot map gains two columns (indices 5 and 6; widen the array at
-`star.py:397` from 14 to 16 columns — check nothing reads columns 5/6 today;
-`spots_evo_law='gaussian'` only reads column 4):
-* col 5 = `q_i` facular area ratio of this spot (per-spot scatter:
+Spot map gains two columns (indices 14 and 15; the array is widened from 14
+to 16 columns). IMPLEMENTATION NOTE: columns 5/6 were the original proposal but
+the 'linear' evolution law reads column 5, and columns 4-13 are reserved for
+radius coefficients, so the facular columns were moved to 14/15:
+* col 14 = `q_i` facular area ratio of this spot (per-spot scatter:
   `q_i = Q * lognormal(0, 0.3)`),
-* col 6 = `tau_fac_i = tau_decay * facula_lifetime_ratio`.
+* col 15 = `tau_fac_i = tau_decay * facula_lifetime_ratio`.
+A map with fewer columns, or zeros there, falls back to the star-level Q and
+`tau_decay * facula_lifetime_ratio`.
 
 `Rotator.compute_spot_position_vec` (rotator.py ~331-352), gaussian branch:
 * spot radius as now: `rad = R0 * factor_spot(t)`.

@@ -429,6 +429,9 @@ def save_batch(batch_results, batch_idx, dataset_dir):
             col_names = ["init_time", "duration(days)", "colatitude", "longitude@ref_time",
                          "coeff_rad_1", "coeff_rad_2", "coeff_rad_3"][:n_cols]
             df_spots = pd.DataFrame(res['spots'][:, :n_cols], columns=col_names)
+            if res['spots'].shape[1] >= 16:
+                df_spots['facula_q'] = res['spots'][:, 14]
+                df_spots['facula_decay_time(days)'] = res['spots'][:, 15]
             df_spots['sim_id'] = idx
             spots.append(df_spots)
 
@@ -559,6 +562,13 @@ def simulate_one(models_root,
                 'spot_contrast_min': float(sm.spot_T_contrast_min),
                 'spot_contrast_max': float(sm.spot_T_contrast_max),
                 'spot_max_area': float(sm.spot_max_area),
+                'has_dynamo': bool(sm.has_dynamo),
+                'seed': None if sm.seed is None else int(sm.seed),
+                'facula_q': float(sm.facular_area_ratio),
+                'facula_contrast_scale': float(sm.facula_contrast_scale),
+                'facula_lifetime_ratio': float(sm.facula_lifetime_ratio),
+                'mean_ff_sp': float(np.mean(sm.results['ff_sp'])),
+                'mean_ff_fc': float(np.mean(sm.results['ff_fc'])),
             },
             'limb_darkening_params': {
                 'use_phoenix': bool(sm.use_phoenix_limb_darkening),

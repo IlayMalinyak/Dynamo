@@ -122,7 +122,7 @@ class Rotator():
             vis = np.zeros(len(vec_spot) + 1)
             for i in range(len(vec_spot)):
                 dist = m.acos(np.dot(vec_spot[i], np.array([1, 0, 0])))
-                if (dist - spot_pos[i, 2] * np.sqrt(1 + self.star.facular_area_ratio)) <= (np.pi / 2):
+                if (dist - max(spot_pos[i, 2], spot_pos[i, 3])) <= (np.pi / 2):
                     vis[i] = 1.0
 
             # Check visibility based on ALL planets
@@ -338,9 +338,22 @@ class Rotator():
         else:
             sys.exit('Spot evolution law not implemented yet')
 
-        # Calculate facular radius
-        if self.star.facular_area_ratio != 0.0:
-            rad_fac = np.deg2rad(rad) * np.sqrt(1 + self.star.facular_area_ratio)
+        # Calculate facular radius (outer radius of the annulus around the spot)
+        Q = self.star.facular_area_ratio
+        if self.star.spots_evo_law == 'gaussian' and Q != 0.0:
+            # Faculae decay on their own (longer) time scale, so they outlive the spot.
+            ncol = spot_map.shape[1]
+            q_i = spot_map[:, 14] if ncol > 14 else np.zeros(num_spots)
+            q_i = np.where(q_i > 0, q_i, Q)
+            tau_fac = spot_map[:, 15] if ncol > 15 else np.zeros(num_spots)
+            tau_fac = np.where(tau_fac > 0, tau_fac,
+                               self.star.tau_decay * getattr(self.star, 'facula_lifetime_ratio', 1.0))
+            tt = t - tini
+            ffac = np.where(tt < 0, np.exp(-tt ** 2 / self.star.tau_emerge ** 2),
+                            np.exp(-tt ** 2 / tau_fac ** 2))
+            rad_fac = np.deg2rad(Rcoef_0) * np.sqrt(1 + q_i) * ffac
+        elif Q != 0.0:
+            rad_fac = np.deg2rad(rad) * np.sqrt(1 + Q)
         else:
             rad_fac = np.zeros(num_spots)
 

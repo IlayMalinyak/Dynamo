@@ -329,23 +329,25 @@ def process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
 
     # Process spots and faculae
     for spot_idx in vis_spots_idx:
-        # Skip if spot has zero radius
-        if spot_pos[spot_idx][2] == 0.0:
+        spot_radius = spot_pos[spot_idx][2]
+        facula_radius = spot_pos[spot_idx][3]
+        # Skip if neither a spot nor a facula is present
+        if spot_radius == 0.0 and facula_radius == 0.0:
             continue
 
         # Calculate angular distance between grid and spot
-        dist = m.acos(np.dot(vec_grid[iteration], vec_spot[spot_idx]))
+        dist = m.acos(min(1.0, max(-1.0, np.dot(vec_grid[iteration], vec_spot[spot_idx]))))
 
-        # Calculate spot coverage
-        spot_radius = spot_pos[spot_idx][2]
-        asp += calculate_circular_coverage(dist, width, spot_radius)
+        # Spot coverage of this grid element
+        cov_sp = 0.0
+        if spot_radius > 0.0:
+            cov_sp = calculate_circular_coverage(dist, width, spot_radius)
+        asp += cov_sp
 
-        # Calculate facula coverage (if present)
-        facula_radius = spot_pos[spot_idx][3]
+        # Facula coverage: the annulus around THIS spot (excludes this spot's area)
         if facula_radius > 0.0:
             facula_coverage = calculate_circular_coverage(dist, width, facula_radius)
-            # Facula area excludes the spot area
-            afc += max(0.0, facula_coverage - asp)
+            afc += max(0.0, facula_coverage - cov_sp)
 
     # Process ALL planets (sum coverage)
     n_planets = planets_pos.shape[0] if planets_pos.ndim == 2 else 0
@@ -393,23 +395,25 @@ def process_outer_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
 
     # Process spots and faculae
     for spot_idx in vis_spots_idx:
-        # Skip if spot has zero radius
-        if spot_pos[spot_idx][2] == 0.0:
+        spot_radius = spot_pos[spot_idx][2]
+        facula_radius = spot_pos[spot_idx][3]
+        # Skip if neither a spot nor a facula is present
+        if spot_radius == 0.0 and facula_radius == 0.0:
             continue
 
         # Calculate angular distance between grid and spot
-        dist = m.acos(np.dot(vec_grid[iteration], vec_spot[spot_idx]))
+        dist = m.acos(min(1.0, max(-1.0, np.dot(vec_grid[iteration], vec_spot[spot_idx]))))
 
-        # Calculate spot coverage for outer grid (square-like)
-        spot_radius = spot_pos[spot_idx][2]
-        asp += calculate_square_coverage(dist, width, spot_radius)
+        # Spot coverage of this grid element
+        cov_sp = 0.0
+        if spot_radius > 0.0:
+            cov_sp = calculate_square_coverage(dist, width, spot_radius)
+        asp += cov_sp
 
-        # Calculate facula coverage (if present)
-        facula_radius = spot_pos[spot_idx][3]
+        # Facula coverage: the annulus around THIS spot (excludes this spot's area)
         if facula_radius > 0.0:
             facula_coverage = calculate_square_coverage(dist, width, facula_radius)
-            # Facula area excludes the spot area
-            afc += max(0.0, facula_coverage - asp)
+            afc += max(0.0, facula_coverage - cov_sp)
 
     # Process ALL planets (sum coverage)
     n_planets = planets_pos.shape[0] if planets_pos.ndim == 2 else 0
