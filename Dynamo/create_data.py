@@ -27,6 +27,9 @@ G = 6.67 * 1e-8
 M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
+# Range of the per-star maximum spot area (deg^2), sampled log-uniformly.
+SPOT_AREA_MIN = 3.0
+SPOT_AREA_MAX = 50.0
 
 def is_main_sequence(teff, logg):
     """
@@ -144,16 +147,19 @@ def calculate_cdpp(L, distance, Nlc):
     return cdpp
 
 
-def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
+def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0):
     """Generate simulation data and save distributions."""
     logger.info(f"Generating simulation data for {Nlc} light curves")
 
     incl = np.arccos(np.random.uniform(0, 1, Nlc))
-    clen = np.random.normal(loc=10, scale=2.8,
-                            size=Nlc)  # gives roughly the fraction with cycle < 4 years to be the same as detected by Reinhold
+    # gives roughly the fraction with cycle < 4 years to be the same as detected by Reinhold;
+    # truncated so that cycle length stays positive
+    clen = truncated_normal_dist(10, 2.8, 2, 25, Nlc)
     cover = 10 ** np.random.uniform(low=-1, high=np.log10(3), size=Nlc)
     # tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
-    tau_evol = np.random.normal(loc=6, scale=2, size=Nlc) # spots lifetime in units of period. The choise of this distribution is arbitrary
+    # spots lifetime in units of period. The choice of this distribution is arbitrary;
+    # truncated so that lifetimes stay positive and longer than ~1.5 rotations
+    tau_evol = truncated_normal_dist(6, 2, 1.5, 15, Nlc)
     # mask = tau_evol < 2
     # tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
@@ -202,6 +208,15 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     
     # Flag Main Sequence stars
     is_ms = is_main_sequence(teff, logg)
+
+    # Stars without a spot dynamo: hot (thin/no convective envelope) or evolved.
+    has_dynamo = (teff <= 7000) & is_ms
+    ar = np.where(has_dynamo, ar, 0.0)
+
+    # Per-star spot temperature-contrast scale (multiplies the Berdyugina 2005
+    # Teff relation) and maximum spot area in deg^2.
+    spot_contrast_scale = truncated_normal_dist(1.0, 0.2, 0.5, 1.5, Nlc)
+    spot_max_area = 10 ** np.random.uniform(np.log10(SPOT_AREA_MIN), np.log10(SPOT_AREA_MAX), Nlc)
     L = np.clip(interp['L'], a_min=None, a_max=1000)
     R = interp['R']
     if 'Prot' in interp.keys() and interp['Prot'] is not None:
@@ -270,9 +285,14 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     sims['planet_transit_t0'] = planet_params['transit_t0']
     sims['planet_semi_amplitude'] = planet_params['semi_amplitude']
     sims['main_seq'] = is_ms
+    sims['Has Dynamo'] = has_dynamo
+    sims['Spot Contrast Scale'] = spot_contrast_scale
+    sims['Spot Max Area'] = spot_max_area
+    sims['Seed'] = np.arange(Nlc, dtype=np.int64) + int(base_seed)
 
 
     sims = pd.DataFrame.from_dict(sims)
+    check_simdata(sims)
     sims.to_csv(os.path.join(root, "simulation_properties.csv"), float_format="%5.4f", index_label="Simulation Number")
 
     # Plot distributions
@@ -284,6 +304,15 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset'):
     logger.info(f"simulation_properties.csv was saved in {root}")
 
     return sims
+
+
+def check_simdata(sims):
+    """Fail loudly if any sampled parameter is outside its physical range."""
+    assert (sims['Cycle Length'] > 0).all(), "non-positive cycle length"
+    assert (sims['Decay Time'] > 0).all(), "non-positive spot decay time"
+    assert (sims['Spot Max'] > sims['Spot Min']).all(), "Spot Max <= Spot Min"
+    assert (sims['Period'] > 0).all(), "non-positive rotation period"
+    assert (sims['Spot Max Area'] > 0).all(), "non-positive spot area"
 
 
 def plot_distributions(sims, root, sim_name):
@@ -471,6 +500,9 @@ def simulate_one(models_root,
     # Skipping the individual file check usage since we are batching.
     
     try:
+        # Per-star seed: makes spectral-epoch choice and noise reproducible
+        if 'Seed' in sim_row and not pd.isna(sim_row['Seed']):
+            np.random.seed(int(sim_row['Seed']) % (2 ** 32))
         # Create StarSim object and set parameters
         sm = Star(conf_file_path='star.conf')
         sm.verbose = verbose
@@ -642,6 +674,8 @@ def main():
                         help='Add luminosity-dependent noise to light curves')
     parser.add_argument('--batch_size', type=int, default=100,
                         help='Number of simulations per saved file chunk (default: 100)')
+    parser.add_argument('--base_seed', type=int, default=0,
+                        help='Offset added to the per-star seed (Seed = index + base_seed)')
     parser.add_argument('--verbose', action='store_true',
                         help='Show per-sample progress bar during light curve generation')
 
@@ -688,7 +722,9 @@ def main():
     else:
         # Generate simulations
         logger.info(f"Generating {args.num_simulations} simulations.")
-        sims = generate_simdata(args.dataset_dir, args.num_simulations, logger, add_noise=args.add_noise)
+        np.random.seed(args.base_seed)
+        sims = generate_simdata(args.dataset_dir, args.num_simulations, logger,
+                                add_noise=args.add_noise, base_seed=args.base_seed)
     
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())

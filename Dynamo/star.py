@@ -13,6 +13,7 @@ from . rotator import Rotator
 from . import noise
 from . import spots
 from . import spectra
+from .contrasts import spot_contrast_berdyugina, T_PHOENIX_MIN
 
 FLUX_SCALE = 1e26
 
@@ -44,6 +45,11 @@ class Star:
         self._initialize_spots_params()
         self._initialize_planet_params()
 
+        # Per-star random seed for spot emergence (None = unseeded) and
+        # whether the star has a spot dynamo at all (hot / evolved stars do not).
+        self.seed = None
+        self.has_dynamo = True
+
         # Read and validate spot map
         self._load_spot_map()
 
@@ -65,6 +71,15 @@ class Star:
         except Exception as e:
             print(f"Error reading {section}.{key}: {e}")
             return None
+
+    def _get_optional(self, section, key, value_type=float, default=None):
+        """Read an optional configuration value, returning `default` when absent."""
+        if self.conf_file.has_option(section, key):
+            try:
+                return value_type(self.conf_file.get(section, key))
+            except ValueError:
+                return default
+        return default
 
     def _initialize_file_params(self):
         """Initialize file-related parameters."""
@@ -286,14 +301,15 @@ class Star:
         Args:
             p (list): List of optimized parameter values
         """
-        # Ensure minimum contrast of 200K so spots are visible. 
-        # Activity Rate * 10 is often too small (e.g. 1.0 -> 10K).
-        calculated_min = params_dict['Activity Rate'] * 10
-        self.spot_T_contrast_min = max(calculated_min, 200.0)
-        self.spot_T_contrast_max = self.spot_T_contrast_min + 50
-        
-        # Update proper spot contrast
-        self.spot_T_contrast = (self.spot_T_contrast_min + self.spot_T_contrast_max) / 2
+        # Spot temperature contrast from the Berdyugina (2005) Teff relation,
+        # times an optional per-star scale. Spot temperature is kept above
+        # the PHOENIX grid floor.
+        dT = float(spot_contrast_berdyugina(params_dict['Teff']))
+        dT *= float(params_dict.get('Spot Contrast Scale', 1.0))
+        dT = min(dT, float(params_dict['Teff']) - T_PHOENIX_MIN)
+        self.spot_T_contrast_min = 0.9 * dT
+        self.spot_T_contrast_max = 1.1 * dT
+        self.spot_T_contrast = dT
         self.differential_rotation = params_dict['Shear']
         self.rotation_period = params_dict['Period']
         self.convective_shift = params_dict['convective_shift']
@@ -319,6 +335,11 @@ class Star:
         self.spots_decay_time = params_dict['Decay Time']
         self.butterfly = params_dict['Butterfly']
         self.distance = params_dict['Distance']
+        seed = params_dict.get('Seed', None)
+        self.seed = None if seed is None or (isinstance(seed, float) and np.isnan(seed)) else int(seed)
+        self.has_dynamo = bool(params_dict.get('Has Dynamo', True))
+        if 'Spot Max Area' in params_dict:
+            self.spot_max_area = float(params_dict['Spot Max Area'])
 
 
     def set_planet_parameters(self, params_dict):
@@ -380,6 +401,13 @@ class Star:
         # This assumes spot_max_area is defined as a capability of the star's dynamo to produce spots of a certain *angular* size.
         scaled_max_area = self.spot_max_area 
 
+        if not getattr(self, 'has_dynamo', True):
+            # No spot dynamo (hot or evolved star): immaculate surface.
+            self.spot_map = np.zeros((0, 14))
+            self.reference_time = 0
+            self.n_grid_rings = 20
+            return
+
         s = spots.SpotsGenerator(max_area=scaled_max_area)
         regions = s.emerge_regions(
             ndays=ndays,
@@ -389,7 +417,7 @@ class Star:
             max_lat=self.spot_max_lat,
             min_lat=self.spot_min_lat,
             butterfly=self.butterfly,
-            seed=1234
+            seed=self.seed
         )
         ref_time = regions[0]['nday'] if len(regions) > 0 else 0
         regions['nday'] -= ref_time
