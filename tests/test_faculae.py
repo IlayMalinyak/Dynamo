@@ -32,7 +32,7 @@ def _facula_only(incl_deg=90.0, colat=90.0, fac_rad=10.0):
 def test_B0_q0_reproduces_master():
     from make_reference_lc import run_scenario
     ref = np.load(DATA / "ref_lc_noQ.npz")
-    t, f = run_scenario()
+    t, f = run_scenario(exact=False)
     assert np.allclose(t, ref["t"])
     assert np.allclose(f, ref["lc"], rtol=0, atol=1e-12), np.abs(f - ref["lc"]).max()
 

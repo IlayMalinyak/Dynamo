@@ -25,7 +25,8 @@ SPOTS = np.array([  # t_emerge, duration, colat, lon, radius (deg)
 ])
 
 
-def run_scenario():
+def run_scenario(exact=False):
+    """exact=False: the original coverage approximation the reference was made with."""
     from Dynamo.star import Star, FLUX_SCALE
     s = Star(conf_file_path="star.conf")
     s.verbose = False
@@ -47,6 +48,7 @@ def run_scenario():
     s.spot_map[:, :5] = SPOTS
     s.reference_time = 0.0
     s.n_grid_rings = 20
+    s.exact_coverage = exact
     t = np.linspace(0.0, 40.0, 800)
     s.compute_forward(t=t)
     scale = (s.radius * 6.957e10 / (s.distance * 3.086e18)) ** 2 * FLUX_SCALE

@@ -1,30 +1,58 @@
 # Spot-on-grid discretisation artifact
 
 Script: `scripts/grid_artifact.py` (single constant spot, 5800 K, Kepler band,
-one rotation, no noise). Data: `docs/grid_artifact.csv`, figure `docs/grid_artifact.png`.
+one rotation, no noise). Data: `docs/grid_artifact.csv`, figure `docs/grid_artifact.png`
+(solid = exact coverage, faded = original approximation).
 
-**Pole-on (i = 0).** The true light curve is flat (the spot circles the line of
-sight at fixed mu). Artifact = peak-to-peak flux / spot depth, median over
-three spot colatitudes (10, 30, 60 deg):
+![](grid_artifact.png)
 
-| rings | grid elements | r = 2 deg | r = 5 deg | r = 10 deg |
-|---|---|---|---|---|
-| 20 | 969 | 0.146 | 0.043 | 0.030 |
-| 30 (current max) | 2218 | 0.156 | 0.047 | 0.015 |
-| 40 | 3971 | 0.092 | 0.030 | 0.009 |
-| 60 | 9016 | 0.048 | 0.014 | 0.005 |
-| 80 | 16096 | 0.040 | 0.010 | 0.003 |
+## Fix: exact coverage (default)
 
-**i = 60 deg.** rms(f_N - f_120) / ptp(f_120) at 30 rings: 3.0% (r = 2), 0.7% (r = 5), 0.2% (r = 10).
+`nbspectra.exact_spot_coverage` computes the exact area of each spot cap (and
+facular annulus) inside every grid cell. At each colatitude the cap covers a
+longitude interval of known half-width; its overlap with every cell of the ring is
+exact, and the colatitude integral uses 8-point Gauss-Legendre after a cosine
+substitution, split where the cap starts to cover whole circles. Cells of a ring
+tile the circle, so a spot moving in longitude conserves its area exactly
+(rel. spread ~1e-15); moving in colatitude the area error is < 2e-5.
 
-Notes
-* The artifact is a fixed absolute error per spot, so it matters most where the
-  real modulation is small: low inclination and small spots.
-* Dynamo picks `n_grid_rings = clip(120 / smallest spot radius, 20, 30)`, so at
-  most 30 rings. Spot radii in generated maps span about 1-11 deg, and decaying
-  spots shrink further, so pole-on stars carry roughly 5-15% spurious modulation.
-* Per-time-step cost scales with the number of grid elements (60 rings is about
-  4x and 80 rings about 7x the 30-ring cost).
-* Convergence is irregular for small spots (r = 2 deg): the error comes from the
-  linear partial-coverage formulas in `nbspectra.calculate_*_coverage`. An exact
-  cap-tile overlap or sub-sampling of edge tiles would remove it without a finer grid.
+The original approximation (`nbspectra.calculate_*_coverage`, linear in the
+spot-cell distance) is kept behind `exact_coverage : false` in `star.conf` /
+`star.exact_coverage = False`. Planet transits still use the approximate
+disk-cell overlap.
+
+## Results
+
+**Pole-on (i = 0).** The true light curve is flat. Artifact = peak-to-peak / spot
+depth, worst of three spot colatitudes (10, 30, 60 deg):
+
+| rings | r = 2° approx | r = 2° exact | r = 5° approx | r = 5° exact | r = 10° approx | r = 10° exact |
+|---|---|---|---|---|---|---|
+| 20 | 0.18 | 1e-12 | 0.13 | 5e-13 | 0.037 | 2e-13 |
+| 30 (current max) | 0.16 | 2e-12 | 0.053 | 5e-13 | 0.019 | 3e-13 |
+| 60 | 0.069 | 4e-12 | 0.016 | 9e-13 | 0.0054 | 3e-13 |
+
+**i = 60°.** rms(f_N − f_ref) / ptp(f_ref), reference = 120 rings, exact:
+
+| rings | r = 2° approx | r = 2° exact | r = 5° approx | r = 5° exact | r = 10° approx | r = 10° exact |
+|---|---|---|---|---|---|---|
+| 20 | 4.2% | 0.34% | 1.8% | 0.07% | 0.50% | 0.05% |
+| 30 | 3.0% | 0.06% | 0.77% | 0.03% | 0.24% | 0.03% |
+| 60 | 1.1% | 0.02% | 0.23% | 0.006% | 0.08% | 0.004% |
+
+The residual exact-coverage error at i = 60° comes from the ring-wise mu
+discretisation (one intensity per ring); it is smooth in time, not a ripple.
+Exact coverage at 30 rings beats the approximation at 80 rings. Wall time per
+light curve is unchanged within noise (~14 s here, dominated by setup).
+
+The old approximation also under-counted spot area: the depth of a 5° spot rises by
+1.5% with exact coverage. Data generated before this change carries the ripple at
+P_rot / (cells per ring), ~40 ppm rms for a typical spotted dwarf.
+
+## On a generated star (`docs/exact_coverage_lc.png`)
+
+![](exact_coverage_lc.png)
+
+Weakly spotted K dwarf (Teff 4155 K, P_rot 27.7 d) from the 30-d trial table, clean
+Kepler light curve. Sub-day rms 40 ppm -> 7 ppm; the 0.255-d (P_rot / 108) peak is
+gone.

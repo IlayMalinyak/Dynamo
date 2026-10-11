@@ -203,9 +203,146 @@ def generate_grid_coordinates_nb(N):
 
     return Ngrids,Ngrid_in_ring, centres, amu, rs, alphas, xs, ys, zs, area, parea
 
+# Gauss-Legendre nodes/weights on [0, pi] for the colatitude integral of the exact coverage
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(8)
+_GL_U = 0.5 * np.pi * (_GL_X + 1.0)
+_GL_WU = 0.5 * np.pi * _GL_W
+
+
+@nb.njit(cache=True, error_model='numpy')
+def _cap_half_width(th, theta_c, cr, ctc, stc):
+    """Half-width in longitude of the cap at colatitude th (0 .. pi)."""
+    den = m.sin(th) * stc
+    if den < 1e-14:
+        return np.pi if m.cos(th - theta_c) >= cr else 0.0
+    c = (cr - m.cos(th) * ctc) / den
+    if c <= -1.0:
+        return np.pi
+    if c >= 1.0:
+        return 0.0
+    return m.acos(c)
+
+
+@nb.njit(cache=True, error_model='numpy')
+def _cap_segment(theta_c, alpha_c, r, a, b, nphi, out, offset):
+    """Add the cap & cell areas for colatitudes in [a, b] (see _cap_ring_overlap)."""
+    w = 2.0 * np.pi / nphi
+    cr = m.cos(r)
+    ctc = m.cos(theta_c)
+    stc = m.sin(theta_c)
+    for k in range(_GL_U.shape[0]):
+        u = _GL_U[k]
+        th = a + 0.5 * (b - a) * (1.0 - m.cos(u))
+        weight = _GL_WU[k] * 0.5 * (b - a) * m.sin(u) * m.sin(th)
+        half = _cap_half_width(th, theta_c, cr, ctc, stc)
+        if half <= 0.0:
+            continue
+        if half >= np.pi:
+            for j in range(nphi):
+                out[offset + j] += weight * w
+            continue
+        # interval [s, e] in a frame where cell j spans [j w, (j+1) w]
+        s = (alpha_c - half + 0.5 * w) % (2.0 * np.pi)
+        e = s + 2.0 * half
+        j0 = int(m.floor(s / w))
+        j1 = int(m.floor(e / w))
+        for jj in range(j0, j1 + 1):
+            lo = max(s, jj * w)
+            hi = min(e, (jj + 1) * w)
+            if hi > lo:
+                out[offset + (jj % nphi)] += weight * (hi - lo)
+
+
+@nb.njit(cache=True, error_model='numpy')
+def _cap_ring_overlap(theta_c, alpha_c, r, th1, th2, nphi, out, offset):
+    """Add the exact area of (spherical cap) & (each cell of one grid ring) to out.
+
+    Grid frame: colatitude th from the pole facing the observer, longitude alpha as
+    in generate_grid_coordinates_nb (cell j of the ring is centred on j*w and spans
+    [(j-1/2)w, (j+1/2)w], w = 2 pi / nphi). The cap has centre (theta_c, alpha_c) and
+    angular radius r. At colatitude th the cap occupies the longitude interval
+    alpha_c +- D(th), cos D = (cos r - cos th cos theta_c) / (sin th sin theta_c).
+    The longitude overlap with every cell is exact; the colatitude integral uses
+    8-point Gauss-Legendre after th = a + (b-a)(1-cos u)/2, which removes the
+    square-root behaviour of D at the cap edges, and is split where the cap starts
+    to cover whole circles (th = r - theta_c). Cells of a ring tile the circle, so a
+    spot moving in longitude conserves its area exactly.
+    """
+    a = max(th1, theta_c - r)
+    b = min(th2, theta_c + r)
+    if a >= b:
+        return
+    split = r - theta_c          # below this colatitude the whole circle is inside
+    if a < split < b:
+        _cap_segment(theta_c, alpha_c, r, a, split, nphi, out, offset)
+        _cap_segment(theta_c, alpha_c, r, split, b, nphi, out, offset)
+    else:
+        _cap_segment(theta_c, alpha_c, r, a, b, nphi, out, offset)
+
+
+@nb.njit(cache=True, error_model='numpy')
+def exact_spot_coverage(N, Ngrid_in_ring, vis_spots_idx, spot_pos, vec_spot):
+    """Exact spot and facula area fractions of every grid cell.
+
+    Returns (asp, afc) arrays over all cells: asp = sum over visible spots of
+    area(spot cap & cell) / area(cell); afc = the same for the facular annulus
+    (cap of the facula radius minus the spot cap of the same feature).
+    """
+    width = np.pi / (2 * N - 1)
+    ncell = 0
+    for i in range(N):
+        ncell += Ngrid_in_ring[i]
+    a_sp = np.zeros(ncell)
+    a_fc_outer = np.zeros(ncell)
+    a_fc = np.zeros(ncell)
+    cell_area = np.zeros(ncell)
+    # ring colatitude bounds
+    offset = 0
+    for i in range(N):
+        th1 = 0.0 if i == 0 else (i - 0.5) * width
+        th2 = 0.5 * width if i == 0 else (i + 0.5) * width
+        nphi = Ngrid_in_ring[i]
+        ca = (m.cos(th1) - m.cos(th2)) * 2.0 * np.pi / nphi
+        for j in range(nphi):
+            cell_area[offset + j] = ca
+        offset += nphi
+    for spot_idx in vis_spots_idx:
+        r_sp = spot_pos[spot_idx][2]
+        r_fc = spot_pos[spot_idx][3]
+        if r_sp <= 0.0 and r_fc <= 0.0:
+            continue
+        x = min(1.0, max(-1.0, vec_spot[spot_idx][0]))
+        theta_c = m.acos(x)
+        alpha_c = m.atan2(vec_spot[spot_idx][1], -vec_spot[spot_idx][2])
+        rmax = max(r_sp, r_fc)
+        offset = 0
+        for i in range(N):
+            th1 = 0.0 if i == 0 else (i - 0.5) * width
+            th2 = 0.5 * width if i == 0 else (i + 0.5) * width
+            nphi = Ngrid_in_ring[i]
+            if th1 <= theta_c + rmax and th2 >= theta_c - rmax:
+                if r_sp > 0.0:
+                    _cap_ring_overlap(theta_c, alpha_c, r_sp, th1, th2, nphi, a_sp, offset)
+                if r_fc > r_sp:
+                    _cap_ring_overlap(theta_c, alpha_c, r_fc, th1, th2, nphi, a_fc_outer, offset)
+                    if r_sp > 0.0:
+                        # annulus = outer cap - this spot's cap (accumulated per feature)
+                        tmp = np.zeros(nphi)
+                        _cap_ring_overlap(theta_c, alpha_c, r_sp, th1, th2, nphi, tmp, 0)
+                        for j in range(nphi):
+                            a_fc[offset + j] -= tmp[j]
+            offset += nphi
+    for c in range(ncell):
+        a_fc[c] += a_fc_outer[c]
+        a_sp[c] = a_sp[c] / cell_area[c]
+        a_fc[c] = max(0.0, a_fc[c]) / cell_area[c]
+    return a_sp, a_fc
+
+
 @nb.njit(cache=True, error_model='numpy')
 def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid, vec_spot,
-                                 simulate_planet, planet_pos, brigh_ph, brigh_sp, brigh_fc, flx_ph, vis):
+                                 simulate_planet, planet_pos, brigh_ph, brigh_sp, brigh_fc, flx_ph, vis,
+                                 exact_coverage=True):
     """
     Calculate the flux emitted from a rotating star with spots, faculae, and possibly planets.
 
@@ -240,6 +377,10 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
         Total flux of photosphere
     vis : array
         Visibility of each spot and the planet
+    exact_coverage : bool
+        True: exact spot/facula area of every cell (exact_spot_coverage); False:
+        the original linear-in-distance approximation, which does not conserve a
+        spot's area as it crosses cells (ripple at P_rot / cells-per-ring).
 
     Returns:
     --------
@@ -270,6 +411,9 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
     # List to store grid type information
     typ = []
 
+    if exact_coverage:
+        ex_sp, ex_fc = exact_spot_coverage(N, Ngrid_in_ring, vis_spots_idx, spot_pos, vec_spot)
+
     # Process each grid element
     for iteration in range(sum(Ngrid_in_ring)):
         # Get the ring index for the current grid element
@@ -283,7 +427,11 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
                     break
 
         # Get the grid element characteristics based on ring location
-        if ring_idx == 0:
+        if exact_coverage:
+            grid_info = exact_grid_cell(iteration, ex_sp[iteration], ex_fc[iteration], vec_grid, width,
+                                        simulate_planet, planet_pos, cos_centers, ring_idx,
+                                        any_planet_visible)
+        elif ring_idx == 0:
             # Central grid (circle)
             grid_info = process_central_grid(iteration, vis_spots_idx, spot_pos, vec_grid, vec_spot,
                                              width, simulate_planet, planet_pos, any_planet_visible)
@@ -309,6 +457,32 @@ def loop_generate_rotating_lc_nb(N, Ngrid_in_ring, proj_area, cos_centers, spot_
         typ.append([aph, asp, afc, apl])
 
     return flux, typ, Aph, Asp, Afc, Apl
+
+
+@nb.njit(cache=True)
+def exact_grid_cell(iteration, asp, afc, vec_grid, width, simulate_planet, planets_pos,
+                    cos_centers, ring_idx, any_planet_visible):
+    """Cell fractions from exact spot/facula coverage plus the planet coverage."""
+    apl = 0.0
+    n_planets = planets_pos.shape[0] if planets_pos.ndim == 2 else 0
+    if simulate_planet and any_planet_visible and n_planets > 0:
+        if ring_idx == 0:
+            width2 = 2 * m.sin(width / 2)
+        else:
+            width2 = cos_centers[ring_idx] * width
+        for p_idx in range(n_planets):
+            planet_pos = planets_pos[p_idx]
+            dist = m.sqrt((planet_pos[0] * m.cos(planet_pos[1]) - vec_grid[iteration, 1]) ** 2 +
+                          (planet_pos[0] * m.sin(planet_pos[1]) - vec_grid[iteration, 2]) ** 2)
+            if dist > width2 / 2 + planet_pos[2]:
+                apl_single = 0.0
+            elif dist < planet_pos[2] - width2 / 2:
+                apl_single = 1.0
+            else:
+                apl_single = -(dist - planet_pos[2] - width2 / 2) / width2
+            apl += apl_single
+    asp, afc, apl = adjust_area_fractions(asp, afc, apl)
+    return 1 - asp - afc - apl, asp, afc, apl
 
 
 @nb.njit(cache=True)

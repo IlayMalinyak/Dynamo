@@ -6,8 +6,10 @@ Single constant spot, solar-like star, Kepler band, one rotation, no noise.
 * Pole-on (i = 0): a spot circles the line of sight at fixed mu, so the TRUE
   light curve is flat. Any modulation is grid error. Reported as
   ptp(flux) / depth, where depth = 1 - mean(flux).
-* i = 60 deg: error relative to a 120-ring reference,
+* i = 60 deg: error relative to a 120-ring exact-coverage reference,
   rms(f_N - f_ref) / ptp(f_ref).
+
+Both coverage schemes are run: exact (default) and the original approximation.
 
   python scripts/grid_artifact.py --out docs/grid_artifact --n-cpu 8
 """
@@ -33,7 +35,7 @@ REF_RINGS = 120
 NTIME = 400
 
 
-def light_curve(incl, colat, rad, rings):
+def light_curve(incl, colat, rad, rings, exact=True):
     from helpers import make_star, flux_scale
     s = make_star(Inclination=np.deg2rad(incl))
     s.conf_file.set("general", "wavelength_lower_limit", "4000")
@@ -45,6 +47,7 @@ def light_curve(incl, colat, rad, rings):
     s.spot_map[0, :5] = [-1.0, 1e6, colat, 0.0, rad]
     s.reference_time = 0.0
     s.n_grid_rings = rings
+    s.exact_coverage = exact
     t = np.linspace(0, s.rotation_period, NTIME, endpoint=False)
     t0 = time.time()
     s.compute_forward(t=t)
@@ -52,12 +55,13 @@ def light_curve(incl, colat, rad, rings):
 
 
 def job(args):
-    kind, incl, colat, rad, rings = args
+    kind, incl, colat, rad, rings, exact = args
     import contextlib
     import io
     with contextlib.redirect_stdout(io.StringIO()):
-        f, dt = light_curve(incl, colat, rad, rings)
-    return dict(kind=kind, incl=incl, colat=colat, rad=rad, rings=rings, seconds=dt, flux=f)
+        f, dt = light_curve(incl, colat, rad, rings, exact)
+    return dict(kind=kind, coverage="exact" if exact else "approx", incl=incl, colat=colat, rad=rad,
+                rings=rings, seconds=dt, flux=f)
 
 
 def main():
@@ -65,12 +69,14 @@ def main():
     ap.add_argument("--out", default="docs/grid_artifact")
     ap.add_argument("--n-cpu", type=int, default=8)
     a = ap.parse_args()
-    jobs = [("pole_on", 0.0, c, r, n) for c, r, n in itertools.product(COLATS, RADII, RINGS)]
-    jobs += [("i60", 60.0, 60.0, r, n) for r, n in itertools.product(RADII, RINGS + [REF_RINGS])]
+    jobs = [("pole_on", 0.0, c, r, n, e) for c, r, n, e in itertools.product(COLATS, RADII, RINGS, (True, False))]
+    jobs += [("i60", 60.0, 60.0, r, n, e) for r, n, e in itertools.product(RADII, RINGS, (True, False))]
+    jobs += [("i60", 60.0, 60.0, r, REF_RINGS, True) for r in RADII]
     with Pool(a.n_cpu) as pool:
         res = pool.map(job, jobs, chunksize=1)
     rows = []
     ref = {r["rad"]: r["flux"] for r in res if r["kind"] == "i60" and r["rings"] == REF_RINGS}
+    res = [r for r in res if r["rings"] != REF_RINGS]
     for r in res:
         f = r.pop("flux")
         depth = 1.0 - f.mean()
@@ -82,7 +88,7 @@ def main():
             r.update(depth_ppt=1e3 * depth, true_ptp_ppt=1e3 * np.ptp(fr),
                      artifact_frac=np.sqrt(np.mean((f - fr) ** 2)) / np.ptp(fr))
         rows.append(r)
-    d = pd.DataFrame(rows).sort_values(["kind", "colat", "rad", "rings"])
+    d = pd.DataFrame(rows).sort_values(["kind", "coverage", "colat", "rad", "rings"])
     out = ROOT / a.out
     out.parent.mkdir(parents=True, exist_ok=True)
     d.to_csv(out.with_suffix(".csv"), index=False)
@@ -99,13 +105,16 @@ def plot(d, path):
                          "axes.linewidth": 1.6})
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
     colors = {2.0: "#1f6fb4", 5.0: "#d9822b", 10.0: "#2a9d55"}
-    po = d[d.kind == "pole_on"]
-    for (c, r), g in po.groupby(["colat", "rad"]):
-        ls = {10.0: "-", 30.0: "--", 60.0: ":"}[c]
-        axes[0].plot(g.rings, g.artifact_frac, ls, color=colors[r], lw=2.5, marker="o")
-    i60 = d[(d.kind == "i60") & (d.rings < REF_RINGS)]
-    for r, g in i60.groupby("rad"):
-        axes[1].plot(g.rings, g.artifact_frac, color=colors[r], lw=2.5, marker="o", label=f"r = {r:g}°")
+    if "coverage" not in d:
+        d = d.assign(coverage="approx")
+    for cov, alpha, mk in (("approx", 0.3, "s"), ("exact", 1.0, "o")):
+        po = d[(d.kind == "pole_on") & (d.coverage == cov)]
+        for (c, r), g in po.groupby(["colat", "rad"]):
+            ls = {10.0: "-", 30.0: "--", 60.0: ":"}[c]
+            axes[0].plot(g.rings, g.artifact_frac, ls, color=colors[r], lw=2.5, marker=mk, alpha=alpha)
+        i60 = d[(d.kind == "i60") & (d.rings < REF_RINGS) & (d.coverage == cov)]
+        for r, g in i60.groupby("rad"):
+            axes[1].plot(g.rings, g.artifact_frac, color=colors[r], lw=2.5, marker=mk, alpha=alpha)
     from matplotlib.ticker import FixedLocator, NullFormatter, ScalarFormatter
     for ax in axes:
         ax.set_xscale("log")
@@ -122,8 +131,10 @@ def plot(d, path):
     h = [Line2D([], [], color=c, lw=2.5, label=f"r = {r:g}°") for r, c in colors.items()]
     h += [Line2D([], [], color="0.3", lw=2.5, ls=ls, label=f"colat {c:g}°")
           for c, ls in ((10.0, "-"), (30.0, "--"), (60.0, ":"))]
-    axes[0].legend(handles=h, fontsize=10, frameon=False, loc="lower left", ncol=2)
-    axes[1].legend(fontsize=11, frameon=False, loc="lower left")
+    axes[0].legend(handles=h, fontsize=10, frameon=False, loc="center left", ncol=2)
+    h2 = [Line2D([], [], color="0.2", lw=2.5, marker="o", label="exact"),
+          Line2D([], [], color="0.2", lw=2.5, marker="s", alpha=0.3, label="approx")]
+    axes[1].legend(handles=h2, fontsize=11, frameon=False, loc="center left")
     fig.tight_layout()
     fig.savefig(path, dpi=200)
     print("saved", path)

@@ -106,6 +106,10 @@ class Star:
         self.wavelength_lower_limit = self._get_config_value('general', 'wavelength_lower_limit', float)
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
+        # exact spot/facula area per grid cell (nbspectra.exact_spot_coverage); False
+        # restores the original approximation, which ripples at P_rot / cells-per-ring
+        self.exact_coverage = self._get_optional(
+            'general', 'exact_coverage', lambda v: v.strip().lower() not in ('0', 'false', 'no'), True)
         
         # Parse photometry configurations
         photometry_names_str = self._get_config_value('general', 'photometry_names', str)

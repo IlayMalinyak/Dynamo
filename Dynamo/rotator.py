@@ -148,7 +148,7 @@ class Rotator():
                         nbspectra.loop_generate_rotating_lc_nb(
                             N, Ngrid_in_ring, proj_area, cos_centers, spot_pos, vec_grid,
                             vec_spot, simulate_planet, all_planet_pos, brigh_grid_ph, brigh_grid_sp,
-                            brigh_grid_fc, flx_ph, vis)
+                            brigh_grid_fc, flx_ph, vis, getattr(self.star, 'exact_coverage', True))
 
                     # Check for non-finite values
                     if not np.isfinite(flux[k]):
