@@ -715,6 +715,10 @@ def main():
                         help='Do not download PHOENIX models; use what is already in models_root')
     parser.add_argument('--q_activity_dep', action='store_true',
                         help='Make the facular area ratio Q decrease with activity (Q * ar^-0.3)')
+    parser.add_argument('--start', type=int, default=None,
+                        help='First table row to simulate (for splitting one table over several jobs)')
+    parser.add_argument('--stop', type=int, default=None,
+                        help='One past the last table row to simulate')
     parser.add_argument('--verbose', action='store_true',
                         help='Show per-sample progress bar during light curve generation')
 
@@ -795,6 +799,12 @@ def main():
     # Disable inner progress bar when using multiprocessing (bars conflict)
     effective_verbose = args.verbose and num_cpus == 1
 
+    # Optional row slice so one table can be split across several jobs.
+    # Chunk ids start at the slice start, so jobs never overwrite each other's files.
+    if args.start is not None or args.stop is not None:
+        sims = sims.iloc[args.start:args.stop]
+        logger.info(f"Simulating rows [{args.start}, {args.stop}) -> {len(sims)} stars")
+
     # Prepare arguments for multiprocessing
     args_list = [(base_dir, i, row, args.dataset_dir, logger, args.ndays,
                   args.plot_dir, args.plot_every, effective_verbose)
@@ -802,7 +812,7 @@ def main():
 
     # Run simulations
     batch_buffer = []
-    chunk_counter = 0
+    chunk_counter = args.start or 0
     successful_count = 0
     
     # Define result processing function
