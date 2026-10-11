@@ -39,6 +39,66 @@ P_ACTIVE_GIANT = 0.03
 ACTIVE_GIANT_AR = (1.0, 30.0)
 DYNAMO_TEFF_MAX = 7000.0
 
+# Spot-latitude population (lat_model "gaussian", starry_process-style). Per star:
+#   mean  mu_i = mean + rossby_slope * log10(Ro_i / Ro_sun) + N(0, mean_scatter),
+#              clipped to [0, mean_max]  [deg]
+#   width sigma_i ~ log-uniform(width_min, width_max)                  [deg]
+#   drift D_i = drift for butterfly stars, else 0 (centroid moves mu+D/2 -> mu-D/2)
+# Each value may be a number or [lo, hi] (drawn uniformly once per table), so many
+# populations with known hyperparameters can be generated. model "band" restores
+# the original activity-dependent band (Spot Min/Max). No measured population prior
+# exists; defaults are Sun-like (centroid ~30 -> 8 deg, Hathaway 2015) with broad
+# star-to-star scatter. Rapid rotators are expected to have higher-latitude spots
+# (Schuessler & Solanki 1992; Isik et al. 2018): rossby_slope < 0.
+LATITUDE_POP_DEFAULT = dict(model="gaussian", mean=20.0, mean_scatter=10.0, mean_max=75.0,
+                            width_min=3.0, width_max=12.0, drift=20.0, rossby_slope=0.0)
+ROSSBY_SUN = None  # set below from the same tau_c law
+
+
+def convective_turnover_days(teff):
+    """Convective turnover time tau_c [d] (Cranmer & Saar 2011, eq. 36)."""
+    teff = np.asarray(teff, dtype=float)
+    return 314.24 * np.exp(-(teff / 1952.5) - (teff / 6250.0) ** 18) + 0.002
+
+
+ROSSBY_SUN = 25.4 / convective_turnover_days(5772.0)
+
+
+def resolve_population(config, rng):
+    """Fill defaults and draw [lo, hi] entries once per table."""
+    pop = dict(LATITUDE_POP_DEFAULT)
+    pop.update(config or {})
+    out = {}
+    for k, v in pop.items():
+        if isinstance(v, (list, tuple)) and len(v) == 2 and k != "model":
+            out[k] = float(rng.uniform(v[0], v[1]))
+            out[k + "_range"] = [float(v[0]), float(v[1])]
+        else:
+            out[k] = v
+    return out
+
+
+def load_latitude_config(arg):
+    """--latitude_config: path to a JSON file or an inline JSON string."""
+    if not arg:
+        return None
+    if os.path.exists(arg):
+        with open(arg) as f:
+            return json.load(f)
+    return json.loads(arg)
+
+
+def latitude_population(teff, prot, butterfly, pop, rng):
+    """Per-star latitude parameters for the gaussian latitude model."""
+    n = len(teff)
+    rossby = np.asarray(prot) / convective_turnover_days(teff)
+    mu = (pop["mean"] + pop["rossby_slope"] * np.log10(rossby / ROSSBY_SUN)
+          + rng.normal(0.0, pop["mean_scatter"], n))
+    mu = np.clip(mu, 0.0, pop["mean_max"])
+    width = 10 ** rng.uniform(np.log10(pop["width_min"]), np.log10(pop["width_max"]), n)
+    drift = np.where(butterfly, pop["drift"], 0.0)
+    return rossby, mu, width, drift
+
 def is_main_sequence(teff, logg):
     """
     Condition for dwarfs (Main Sequence) vs Giants from Ciardi et al. 2011.
@@ -156,8 +216,12 @@ def calculate_cdpp(L, distance, Nlc):
 
 
 def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0,
-                     q_activity_dep=False):
-    """Generate simulation data and save distributions."""
+                     q_activity_dep=False, latitude_config=None):
+    """Generate simulation data and save distributions.
+
+    latitude_config: dict overriding LATITUDE_POP_DEFAULT (spot-latitude population);
+    the resolved hyperparameters are written to <root>/population.json.
+    """
     logger.info(f"Generating simulation data for {Nlc} light curves")
 
     incl = np.arccos(np.random.uniform(0, 1, Nlc))
@@ -279,6 +343,20 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
         incl[k] = assign_spin_orbit_geometry(teff[k], planet_params['planets'][k])
     planet_params.update(_create_flat_arrays(planet_params['planets'], planet_params['n_planets'], Nlc))
 
+    # Spot-latitude population (separate generator: other draws unchanged)
+    rng_lat = np.random.default_rng([int(base_seed), 47])
+    pop = resolve_population(latitude_config, rng_lat)
+    rossby, lat_mean, lat_width, lat_drift = latitude_population(teff, prot, butterfly, pop, rng_lat)
+    if pop["model"] == "gaussian":
+        # band columns kept consistent for reference (+-2 sigma around the mean)
+        theta_low = np.clip(lat_mean - 2 * lat_width, 0.0, 89.0)
+        theta_high = np.clip(lat_mean + 2 * lat_width, theta_low + 1.0, 90.0)
+    else:
+        lat_mean = lat_width = lat_drift = np.full(Nlc, np.nan)
+    with open(os.path.join(root, "population.json"), "w") as f:
+        json.dump({"latitude": pop, "rossby_sun": float(ROSSBY_SUN), "base_seed": int(base_seed),
+                   "n_stars": int(Nlc)}, f, indent=2)
+
     # Stitch this all together and write the simulation properties to file
     sims = {}
     sims['mass'] = mass
@@ -329,6 +407,10 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims['Facula Q'] = facula_q
     sims['Facula Contrast Scale'] = facula_contrast_scale
     sims['Facula Lifetime Ratio'] = facula_lifetime_ratio
+    sims['Rossby'] = rossby
+    sims['Lat Mean'] = lat_mean       # deg, NaN for the band model
+    sims['Lat Width'] = lat_width     # deg
+    sims['Lat Drift'] = lat_drift     # deg over a cycle (butterfly stars)
 
 
     sims = pd.DataFrame.from_dict(sims)
@@ -736,6 +818,9 @@ def main():
                         help='Offset added to the per-star seed (Seed = index + base_seed)')
     parser.add_argument('--skip_download', action='store_true',
                         help='Do not download PHOENIX models; use what is already in models_root')
+    parser.add_argument('--latitude_config', type=str, default=None,
+                        help='JSON file (or inline JSON) overriding the spot-latitude population '
+                             '(keys of LATITUDE_POP_DEFAULT; numbers or [lo, hi] ranges)')
     parser.add_argument('--q_activity_dep', action='store_true',
                         help='Make the facular area ratio Q decrease with activity (Q * ar^-0.3)')
     parser.add_argument('--start', type=int, default=None,
@@ -792,7 +877,8 @@ def main():
         np.random.seed(args.base_seed)
         sims = generate_simdata(args.dataset_dir, args.num_simulations, logger,
                                 add_noise=args.add_noise, base_seed=args.base_seed,
-                                q_activity_dep=args.q_activity_dep)
+                                q_activity_dep=args.q_activity_dep,
+                                latitude_config=load_latitude_config(args.latitude_config))
     
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())

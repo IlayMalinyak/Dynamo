@@ -351,6 +351,18 @@ class Star:
         self.spots_decay_time = params_dict['Decay Time']
         self.spots_decay_time = params_dict['Decay Time']
         self.butterfly = params_dict['Butterfly']
+        # Spot-latitude model: per-star Gaussian (Lat Mean/Width/Drift columns,
+        # create_data latitude population) or the original band (Spot Min/Max).
+        lat_mean = params_dict.get('Lat Mean', None)
+        if lat_mean is not None and np.isfinite(float(lat_mean)):
+            self.lat_model = 'gaussian'
+            self.lat_mean = float(lat_mean)
+            self.lat_width = float(params_dict['Lat Width'])
+            self.lat_drift = float(params_dict.get('Lat Drift', 0.0))
+        else:
+            self.lat_model = 'band'
+            self.lat_mean = self.lat_width = None
+            self.lat_drift = 0.0
         self.distance = params_dict['Distance']
         seed = params_dict.get('Seed', None)
         self.seed = None if seed is None or (isinstance(seed, float) and np.isnan(seed)) else int(seed)
@@ -447,7 +459,11 @@ class Star:
             max_lat=self.spot_max_lat,
             min_lat=self.spot_min_lat,
             butterfly=self.butterfly,
-            seed=self.seed
+            seed=self.seed,
+            lat_model=getattr(self, 'lat_model', 'band'),
+            lat_mean=getattr(self, 'lat_mean', None),
+            lat_width=getattr(self, 'lat_width', None),
+            lat_drift=getattr(self, 'lat_drift', 0.0),
         )
         ref_time = regions[0]['nday'] if len(regions) > 0 else 0
         regions['nday'] -= ref_time

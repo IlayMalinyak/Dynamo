@@ -212,7 +212,11 @@ class SpotsGenerator(object):
             max_lat=28,
             min_lat=7,
             prob_corr=0.2,
-            seed=None
+            seed=None,
+            lat_model="band",
+            lat_mean=None,
+            lat_width=None,
+            lat_drift=0.0,
     ):
         """
         Simulates the emergence of starspots with uniform temporal distribution.
@@ -222,6 +226,11 @@ class SpotsGenerator(object):
             nspots (int, optional): Total number of spots to emerge. If None,
                                    calculated from activity_level
             activity_level (float): Used to calculate nspots if not provided
+            lat_model (str): "band" (original butterpy-style band between
+                min_lat and max_lat) or "gaussian": |latitude| ~ N(mu, lat_width)
+                truncated to [0, 90] deg, hemisphere random, with
+                mu = lat_mean + lat_drift * (0.5 - cycle phase) if butterfly
+                (equatorward drift over the cycle) else lat_mean.
             ... (other parameters same as before)
         """
         # Set attributes
@@ -234,6 +243,10 @@ class SpotsGenerator(object):
         self.min_lat = min_lat
         self.prob_corr = prob_corr
         self.seed = seed
+        self.lat_model = lat_model
+        gaussian = lat_model == "gaussian"
+        if gaussian and (lat_mean is None or lat_width is None):
+            raise ValueError("lat_model='gaussian' needs lat_mean and lat_width")
 
         if self.seed is not None:
             np.random.seed(self.seed)
@@ -323,7 +336,9 @@ class SpotsGenerator(object):
                 # Latitude scatter
                 lat = p_lat + np.random.normal(0, sigma_scatter)
                 # Clamp latitude
-                if butterfly:
+                if gaussian:
+                    l1, l2 = 0.0, 89.9
+                elif butterfly:
                     l1 = max(min_lat - 7, 0)
                     l2 = min(max_lat + 7, 90)
                 else:
@@ -336,7 +351,15 @@ class SpotsGenerator(object):
                 
                 is_correlated = True
             
-            if not is_correlated:
+            if not is_correlated and gaussian:
+                mu = lat_mean + (lat_drift * (0.5 - phase) if butterfly else 0.0)
+                lat = -1.0
+                while not (0.0 <= lat <= 89.9):        # truncated normal by rejection
+                    lat = np.random.normal(mu, lat_width)
+                k = np.random.choice([0, 1])
+                lon = np.random.uniform(0, 360)
+
+            elif not is_correlated:
                 # Standard independent emergence (Random)
                 
                 # Determine latitude distribution
