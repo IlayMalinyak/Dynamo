@@ -38,3 +38,16 @@ intrinsic scatter around the scaling relations.
 
     python scripts/add_background.py DATASET --instrument Kepler [--realizations N]
     python scripts/background_validation.py DATASET/simulation_properties.csv
+
+## Effect on light curves (`docs/background_effect.png`)
+
+![](background_effect.png)
+
+Clean (black) vs with Kepler background (orange), 30-d trial run, full and 2-d zoom.
+Top: logg 2.0 giant without spots, previously flat, now ~1 ppt granulation on ~day
+timescales. Middle: spotted K dwarf, background negligible against 2% spot modulation.
+Bottom: weakly spotted K dwarf, Kp 14, white noise comparable to the spot signal.
+
+The clean curves show 0.1 ppt ripples at P_rot / (cells per grid ring) (star 2:
+0.255 d = P_rot / 108). This is the grid-coverage artifact (docs/grid_artifact.md), not a
+background effect: ~40 ppm rms, rotation-locked.
