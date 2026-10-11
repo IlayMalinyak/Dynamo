@@ -703,6 +703,8 @@ def main():
                         help='Number of simulations per saved file chunk (default: 100)')
     parser.add_argument('--base_seed', type=int, default=0,
                         help='Offset added to the per-star seed (Seed = index + base_seed)')
+    parser.add_argument('--skip_download', action='store_true',
+                        help='Do not download PHOENIX models; use what is already in models_root')
     parser.add_argument('--q_activity_dep', action='store_true',
                         help='Make the facular area ratio Q decrease with activity (Q * ar^-0.3)')
     parser.add_argument('--verbose', action='store_true',
@@ -759,15 +761,16 @@ def main():
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())
     teff_range = (sims['Teff'].min(), sims['Teff'].max())
-    print("="*30, "\nDownloading relevant Phoenix spectra files\n", "="*30)
-    download_phoenix_models(
-        base_dir=args.models_root,
-        metallicity_range=feh_range,
-        temperature_range=teff_range,
-        logg_range=logg_range,
-        max_workers=int(args.n_cpu),
-        delay_between_requests=0.4
-    )
+    if not args.skip_download:
+        print("="*30, "\nDownloading relevant Phoenix spectra files\n", "="*30)
+        download_phoenix_models(
+            base_dir=args.models_root,
+            metallicity_range=feh_range,
+            temperature_range=teff_range,
+            logg_range=logg_range,
+            max_workers=int(args.n_cpu),
+            delay_between_requests=0.4
+        )
 
     if args.models_root is None:
         base_dir = Path.home() / '.dynamo'

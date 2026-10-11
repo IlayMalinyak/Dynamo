@@ -1,3 +1,4 @@
+import os
 import tqdm
 import numpy as np
 import emcee
@@ -93,7 +94,11 @@ class Star:
         self.filter_name = self._get_config_value('files', 'filter_name')
         self.orders_CRX_filename = self._get_config_value('files', 'orders_CRX_filename')
 
-        self.models_root = Path(self.models_root)
+        self.models_root = Path(os.path.expanduser(str(self.models_root)))
+        if not self.models_root.exists():
+            # Configured path absent on this machine: fall back to the
+            # DYNAMO_MODELS_ROOT environment variable, then ~/.dynamo.
+            self.models_root = Path(os.environ.get('DYNAMO_MODELS_ROOT', Path.home() / '.dynamo'))
 
     def _initialize_general_params(self):
         """Initialize general simulation parameters."""

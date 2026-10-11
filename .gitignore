@@ -11,3 +11,9 @@ FASMA-synthesis/
 .idea/
 .showyourwork/
 .idea/
+dataset_faculae_smoke*/
+tests/temp_star.conf
+tests/images/
+plots/
+Dynamo/plots/
+__pycache__/

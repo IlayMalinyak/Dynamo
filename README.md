@@ -84,6 +84,9 @@ python -m Dynamo.create_data \
     --ndays 1000 \
     --n_cpu 4
 ```
+Add `--skip_download` to use only the PHOENIX models already on disk, `--base_seed` to
+offset the per-star seeds, and `--q_activity_dep` to make the facular area ratio fall
+with activity.
 this would create 1000 simulations of 1000 days each. The arguments are:
 
 - `--models_root`: Path to the directory containing stellar evolution models.
@@ -99,12 +102,40 @@ this would create 1000 simulations of 1000 days each. The arguments are:
 Simulation parameters are controlled via the `star.conf` file, which includes sections for:
 
 - Stellar properties (mass, radius, temperature, rotation, etc.)
-- Spot and faculae properties (faculea are currently not supported)
+- Spot and faculae properties (see *Faculae* below)
 - Limb darkening
 - Planetary parameters
 - Noise characteristics
 
 See the comments in `star.conf` for detailed descriptions of each parameter.
+
+### Faculae
+
+Each spot is surrounded by a facular annulus with outer radius `r_spot * sqrt(1 + Q)`,
+where `Q` (`facular_area_ratio`, or the per-star `Facula Q` column) is the facular to
+spot area ratio (solar value about 3). Facular brightness follows the solar
+centre-to-limb law of Meunier et al. (2010),
+
+    dT(mu) = scale * (250.9 - 407.4 mu + 190.9 mu^2)  K,
+
+so faculae are nearly invisible at disk centre and bright near the limb. Their
+intensity at each grid ring is a blend between the photosphere and a PHOENIX model
+300 K hotter, weighted by `dT(mu) / 300`. `facula_contrast_scale` multiplies the law
+(its Teff dependence is not well known). Faculae decay on their own time scale,
+`facula_lifetime_ratio` times the spot decay time, so they outlive their spots. Spectra
+include a separate facular velocity kernel. `Q = 0` reproduces the spot-only model.
+
+Spot temperature contrast follows the Berdyugina (2005) Teff relation times a per-star
+`Spot Contrast Scale`. Every simulated star has its own random `Seed`, so spot maps
+are reproducible per star and independent across stars.
+
+Known limitations: the facular law is solar; faculae exist only as annuli around
+spots (no independent network); the facular intensity is a linear blend in temperature
+between two PHOENIX models; spot lifetime does not depend on spot size.
+
+**Bug fix (2026-10):** earlier versions paired each PHOENIX `mu` with the intensity
+from the opposite side of the disk, which made the spot signal depend almost only on
+the central grid element. Data generated before this fix should be regenerated.
 
 ## License
 

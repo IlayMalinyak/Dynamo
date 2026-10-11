@@ -49,6 +49,7 @@ This module, implemented in `spots.py`, is motivated by `Butterpy` [@Claytor2023
 - **Butterfly diagram**: Spot emergence latitudes can follow a solar-like butterfly pattern, with latitude ranges evolving through activity cycles. Cycle period, cycle overlap, and minimum/maximum emergence latitudes are configurable.
 - **Spot evolution**: Each spot has a configurable emergence time scale ($\tau_1$) and decay time scale ($\tau_2$), allowing for realistic temporal evolution of spot coverage.
 - **Spatial correlation**: Spots can have correlated emergence positions, controlled by a probability correlation parameter.
+- **Faculae**: Each spot carries a facular annulus whose area ratio, contrast and lifetime are set per star. Facular brightness follows the solar centre-to-limb temperature law of Meunier et al. (2010), so faculae brighten toward the limb while spots are darkest at disk centre. Because the two features respond differently to the viewing angle, the balance between spot- and facula-driven variability depends on stellar inclination.
 
 ## Stellar Atmosphere Interpolation
 

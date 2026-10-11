@@ -90,7 +90,7 @@ def test_two_planet_simulation():
     print("\n=== Test 3: Two-Planet Simulation ===")
     
     star = Star(conf_file_path='star.conf')
-    star.models_root = Path("C:/Users/Ilay/.dynamo")
+    star.models_root = Path(os.environ.get("DYNAMO_MODELS_ROOT", Path.home() / ".dynamo"))
     
     # Setup star parameters
     star.activity = 0.1
