@@ -111,6 +111,6 @@ is a power law from `f_break` to `f_tail`. `f_break` (plateau level) is the rema
 calibration parameter.
 
 **Calibration (done, 2026-10-12):** runs `dataset_cov_act_fb0300`, `_fb0600`, `_fb1200`
-(f_break 0.03 / 0.06 / 0.12). **f_break = 0.06**: Masuda plateau 10.8 ppt (target 10.8), slope
--3.9 (target -4.6 +- 0.9), Sun-like stars 0.70 ppt (Sun 0.65-0.7). The rough estimate above
+(f_break 0.03 / 0.06 / 0.12). **f_break = 0.06**: Masuda plateau 10.7 ppt (target 10.8), slope
+-4.2 (target -4.6 +- 0.9), Sun-like stars 0.73 ppt (Sun 0.65-0.7); planet hosts excluded. The rough estimate above
 gave ~0.07. Details and the mismatches (McQuillan 95th percentile high): docs/spot_coverage.md.

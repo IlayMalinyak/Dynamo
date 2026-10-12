@@ -21,7 +21,7 @@ def test_seed_controls_spot_map():
 
 
 def test_simdata_bounds():
-    from Dynamo.create_data import generate_simdata
+    from Dynamo.create_data import generate_simdata, DYNAMO_TEFF_MAX
     np.random.seed(0)
     with tempfile.TemporaryDirectory() as d:
         sims = generate_simdata(d, 2000, logging.getLogger("t"), base_seed=7)
@@ -29,8 +29,8 @@ def test_simdata_bounds():
         assert col in sims
     assert (sims["Cycle Length"] > 0).all() and (sims["Decay Time"] >= 1.5).all()
     assert sims["Seed"].is_unique and sims["Seed"].min() == 7
-    assert not sims.loc[sims.Teff > 7000, "Has Dynamo"].any()
-    hot = sims.Teff > 7000
+    assert not sims.loc[sims.Teff > DYNAMO_TEFF_MAX, "Has Dynamo"].any()
+    hot = sims.Teff > DYNAMO_TEFF_MAX
     giant = sims["Evolutionary Class"] == "giant"
     assert (sims.loc[~hot & ~giant, "Has Dynamo"]).all()            # cool dwarfs + subgiants
     assert (sims.loc[giant, "Has Dynamo"] == sims.loc[giant, "Active Giant"] & ~hot[giant]).all()

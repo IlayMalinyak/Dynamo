@@ -37,12 +37,16 @@ SPOT_AREA_MAX = 50.0
 # ~2% of Kepler red giants show rotational modulation, Ceillier et al. 2017), with
 # activity drawn log-uniform in ACTIVE_GIANT_AR (MS median ~7).
 # [own assumption] GIANT_LOGG 3.5 cut; P_ACTIVE_GIANT 0.03 rounded up from the ~2% of
-# Ceillier et al. 2017 ([paper]); active-giant activity range 1-30; DYNAMO_TEFF_MAX
-# 7000 K (no spots on stars without a convective envelope); subgiants always spotted.
+# Ceillier et al. 2017 ([paper]); active-giant activity range 1-30; subgiants always spotted.
+# DYNAMO_TEFF_MAX 6500 K [own assumption]: the edge of the data the spot model is
+#   calibrated on ([paper] McQuillan et al. 2014, Teff < 6500 K; Masuda 2022, 4000-6250 K).
+#   Hotter stars got a few long-lived facular brightenings at Ro/Ro_sun >~ 2 with no
+#   data to check them against (docs/spot_coverage.md); they get no spots or faculae
+#   rather than an untested extrapolation. Was 7000 K until 2026-10-12.
 GIANT_LOGG = 3.5
 P_ACTIVE_GIANT = 0.03
 ACTIVE_GIANT_AR = (1.0, 30.0)
-DYNAMO_TEFF_MAX = 7000.0
+DYNAMO_TEFF_MAX = 6500.0
 
 # Spot-latitude population (lat_model "gaussian", starry_process-style). Per star:
 #   mean  mu_i = mean + rossby_slope * log10(Ro_i / Ro_sun) + N(0, mean_scatter),

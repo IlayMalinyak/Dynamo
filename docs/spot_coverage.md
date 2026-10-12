@@ -205,16 +205,20 @@ Light curves: `docs/lc_gallery_fb0600.png` (`scripts/lc_gallery.py`).
 | arm | plateau 0.2-0.5 [ppt] | slope 0.5-0.8 | R_per 0.8-1.0 Ro_sun, 0.9-1.1 M_sun [ppt] | R_per 5 / 50 / 95% [ppt] | stars above max_spots |
 |---|---|---|---|---|---|
 | target | 10.8 (Masuda 2022) | -4.6 +- 0.9 (Masuda, Kp < 12) | 0.65-0.7 (Sun) | 0.95 / 5.6 / 22.7 (McQuillan 2014) | |
-| f_break 0.03 | 7.3 | -2.9 | 0.57 | 0.25 / 4.5 / 22.9 | 2% |
-| **f_break 0.06 (default)** | **10.8** | **-3.9** | **0.70** | **0.25 / 7.0 / 33.4** | **8%** |
-| f_break 0.12 | 15.8 | -4.8 | 0.63 | 0.25 / 9.7 / 43.2 | 17% |
+| f_break 0.03 | 7.1 | -3.1 | 0.57 | 0.24 / 3.8 / 19.9 | 3% |
+| **f_break 0.06 (default)** | **10.7** | **-4.2** | **0.73** | **0.24 / 6.4 / 27.5** | **9%** |
+| f_break 0.12 | 15.1 | -5.0 | 0.63 | 0.24 / 9.2 / 39.6 | 17% |
 
-**Chosen: f_break = 0.06** [own calibration]. It matches the Masuda plateau, the slope is
-within 1 sigma, and Sun-like stars sit at the Sun's median.
+Planet hosts excluded (12% of stars), as McQuillan excluded KOIs: transits of planets up
+to 0.3 R* enter the 5-95% range (one host reached 47 ppt on 0.04% spot coverage). With
+hosts included the 0.06 arm gave plateau 10.8, slope -3.9, percentiles 0.25 / 7.0 / 33.4.
+
+**Chosen: f_break = 0.06** [own calibration]. It matches the Masuda plateau and slope, and
+Sun-like stars sit at the Sun's median.
 
 Not matched:
-- McQuillan's 95th percentile (33 vs 22.7 ppt; the fast active rotators).
-- McQuillan's 5th percentile (0.25 vs 0.95 ppt). This comparison is biased: McQuillan lists
+- McQuillan's 95th percentile (27.5 vs 22.7 ppt; the fast active rotators).
+- McQuillan's 5th percentile (0.24 vs 0.95 ppt). This comparison is biased: McQuillan lists
   only stars with a detected period, and quiet stars are missing from it.
 - The steep drop above Ro/Ro_sun 0.5 comes partly from the [own assumption] 0.2-1 range of
   the spot-property scaling, not from f_break alone.
@@ -223,3 +227,13 @@ Not matched:
 
 Flat light curves (24 of 200 in the 0.06 arm) are all stars without a dynamo (inactive
 giants, Teff > 7000 K). Every spotted star varies.
+
+**Hot stars.** Above ~6250 K (the Kraft break) the light curves turn from dip-dominated to
+brightening-dominated (median skewness -0.3 below 5000 K, +0.2 at 6250-6500 K, +0.3 at
+6500-7000 K). At 6500-7000 K the Cranmer & Saar tau_c is short, so Ro/Ro_sun reaches 2-9 even
+at P < 1 d; coverage falls to ~0.02-0.06%, Q is at its cap, and the light curve is a few
+isolated facular brightenings fading over ~100 d (`docs/lc_gallery_fb0600.png`, bottom). No
+calibration data exist there (McQuillan < 6500 K, Masuda 4000-6250 K). **DYNAMO_TEFF_MAX
+lowered from 7000 to 6500 K** [own assumption]: stars above it get no spots or faculae. The
+6250-6500 K stars stay (inside McQuillan's sample) but are facula-leaning and only weakly
+constrained.

@@ -26,6 +26,7 @@ reference.
 | f_tail | 0.1% at Ro_sun | own calibration (Sun anchor, docs/sun_calibration.md) |
 | beyond Ro_sun | slope 0.881 | own (Cao's slope reused where no data exist) |
 | coverage scatter | 0.09 dex at all Ro | [paper] Cao & P. at saturation; own: constant in Ro |
+| R_per comparison excludes planet hosts | own (as McQuillan excluded KOIs) |
 | f_break | 0.06 | own calibration (runs act_fb0300/0600/1200, docs/spot_coverage.md); depends on the 0.2-1 range above |
 | same law for dwarfs, subgiants, giants | - | own |
 | tau_c conventions | only Ro/Ro_sun carried across papers | own |
@@ -42,7 +43,8 @@ reference.
 | facular lifetime ratio log-uniform 1.5-5 (star default 3) | own |
 | spot lifetime truncnorm(6, 2, 1.5, 15) rotations | own ("arbitrary" in the original code) |
 | cycle length truncnorm(10, 2.8, 2, 25) yr | inherited ("Reinhold", not verified) |
-| GIANT_LOGG 3.5, DYNAMO_TEFF_MAX 7000 K, subgiants always spotted | own |
+| GIANT_LOGG 3.5, subgiants always spotted | own |
+| DYNAMO_TEFF_MAX 6500 K (was 7000 K) | own: edge of the calibration data (McQuillan 2014 < 6500 K) |
 | P_ACTIVE_GIANT 3% | own, rounded up from [paper] Ceillier 2017 (~2%) |
 | active-giant activity 1-30 | own |
 | latitude population: all numbers and the form (mean linear in log Ro, linear drift) | own; [paper] only the solar centroid range (Hathaway 2015) and the sign of the Ro trend |

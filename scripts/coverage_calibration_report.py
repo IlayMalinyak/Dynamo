@@ -51,7 +51,9 @@ def arm_table(d):
         g = g.sort_values("time")
         sp, ap = cfg[sid]["stellar_params"], cfg[sid]["activity_params"]
         r = sims.loc[sid]
-        if not bool(r["Has Dynamo"]):
+        # McQuillan et al. 2014 excluded known planet hosts (KOIs); transits of our
+        # simulated planets (up to 0.3 R*) would enter the 5-95% range, so drop hosts too.
+        if not bool(r["Has Dynamo"]) or bool(r["simulate_planet"]):
             continue
         y = norm(g.flux.to_numpy(), sp)
         rows.append(dict(sim_id=sid, rper_ppt=1e3 * r_per(y, g.time.to_numpy(), r.Period),
