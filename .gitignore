@@ -18,3 +18,8 @@ tests/images/
 plots/
 Dynamo/plots/
 __pycache__/
+
+# local build / install artifacts and old test runs
+dataset_test/
+dist/
+*.egg-info/
