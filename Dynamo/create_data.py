@@ -101,18 +101,18 @@ def latitude_population(teff, prot, butterfly, pop, rng):
 
 # Time-mean spot coverage (fraction of the whole surface) vs Rossby number; sets the
 # number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star:
-#   f_i = f_sun * min(Ro_i/Ro_sun, ro_sat)^-slope * 10^N(0, scatter_dex), clipped to f_max
+#   f_i = f_sun * max(Ro_i/Ro_sun, ro_sat)^-slope * 10^N(0, scatter_dex), clipped to f_max
 # with Ro in units of the solar value (Cranmer & Saar 2011 tau_c here).
 # Shape: Cao & Pinsonneault 2022 (MNRAS 517, 2165), Pleiades APOGEE fit eq. 5,
 #   f = 0.0634 Ro^-0.881 above log Ro = -0.729, 0.278 below; their log Ro_sun = 0.39,
 #   so the knee is at Ro/Ro_sun = 10^(-0.729-0.39) = 0.076; scatter 0.059/0.278 = 21% -> 0.09 dex
 #   (saturated stars). Their fit is constrained only for Ro/Ro_sun < ~0.2.
-# Level: f_sun = 0.003 is the resolved sunspot coverage at solar maximum
-#   (0.28%, Shapiro et al. 2014, A&A, doi:10.1051/0004-6361/201323086). The spectroscopic level of the same fit at
-#   Ro_sun is 0.029 (~10x higher; also M67 solar analogues 0.020 +- 0.011, Cao & P. 2022);
-#   which level gives Kepler-like amplitudes is a calibration question (docs/spot_coverage.md).
+# Level: f_sun = 0.005, calibrated on 1000-d light curves against the Kepler amplitude
+#   distribution of McQuillan et al. 2014 (docs/spot_coverage.md, 'Calibration'). It lies
+#   between the resolved sunspot coverage at solar maximum (0.28%, Shapiro et al. 2014,
+#   doi:10.1051/0004-6361/201323086) and the spectroscopic level of the same fit at Ro_sun (0.029).
 # model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500]).
-SPOT_COVERAGE_DEFAULT = dict(model="rossby", f_sun=0.003, slope=0.881, ro_sat=0.076,
+SPOT_COVERAGE_DEFAULT = dict(model="rossby", f_sun=0.005, slope=0.881, ro_sat=0.076,
                              scatter_dex=0.09, f_max=0.5)
 
 

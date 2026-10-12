@@ -45,7 +45,7 @@ Two facts matter for the design:
 
 | parameter | default | origin |
 |---|---|---|
-| f_sun | 0.003 | Sun at maximum (Shapiro 2014); calibration parameter, see below |
+| f_sun | 0.005 | calibrated against McQuillan 2014 amplitudes (below); Sun at maximum is 0.003 (Shapiro 2014) |
 | slope | 0.881 | Cao & Pinsonneault 2022 eq. 5 |
 | ro_sat | 0.076 | same, converted with their log Ro_sun = 0.39 |
 | scatter_dex | 0.09 | same, 21% at saturation |
@@ -85,18 +85,13 @@ unresolved groups of smaller spots. The per-star config records `n_spots`,
 `n_spots_expected`, `spot_area_boost`, `spot_max_area_used` and `spot_burn_days`.
 `--coverage_config '{"model": "legacy"}'` restores the old rule.
 
-**Memory.** The rotator used to keep every spot's position at every time step
-(n_steps x n_spots x 3 floats), used only by the `plot_map` figure. At 48000 steps and
-~14000 spots (burn-in included) that is ~16 GB, which exceeded the 16 GB job limit and
-hung the worker pool in the first f_sun = 0.01 / 0.029 calibration runs. It is now kept
-only when `plot_map` is on; a 13245-spot star peaks at 0.41 GB.
-
 ## Population preview (5000 stars, no light curves; counts per 1000-day window, burn-in excluded)
 
 | f_sun | coverage % (5 / 50 / 95) | spots per 1000 d (5 / 50 / 95) | above 3000 / 10000 spots |
 |---|---|---|---|
 | old rule | 0.18 / 0.86 / 4.3 (smoke run) | 76 / 225 / 500 (24% at the cap) | - |
 | 0.003 (resolved Sun) | 0.14 / 0.47 / 1.9 | 16 / 117 / 1006 | 1% / 0% |
+| **0.005 (default)** | 0.23 / 0.78 / 3.2 (0.003 row x 5/3) | 27 / 195 / 1677 (same scaling) | - |
 | 0.01 | 0.48 / 1.55 / 6.3 | 54 / 390 / 3353 | 6% / 1% |
 | 0.029 (spectroscopic) | 1.4 / 4.5 / 18 | 156 / 1132 / 9725 | 24% / 5% |
 
@@ -112,11 +107,43 @@ Single 1000-day Kepler light curve, 48000 steps at 30-min cadence, P = 1 d, one 
 | ~3000 | - | 108 s |
 | ~10000 | - | 207 s |
 
-## Calibration (to do)
+## Calibration
 
-Pick f_sun from light curves. The test: R_per percentiles against McQuillan 2014
-(950 / 5600 / 22700 ppm), and R_per vs Ro/Ro_sun against Masuda 2022 (about a 1% plateau,
-then a steep decline above Ro/Ro_sun ~ 0.4). The arms are f_sun = 0.003, 0.01 and 0.029,
-about 200 stars each, with faculae on. McQuillan's percentiles are for stars with
-*detected* periods, a sample biased toward large amplitudes, so the simulated
-distribution should match the upper part and may fall below at the low end.
+Data: `docs/spot_coverage_calibration.{md,csv,png}`, from `scripts/coverage_calibration_report.py`.
+One 200-star table (172 with a dynamo), written four times by `scripts/make_coverage_tables.py`
+with only the coverage column changed. 1000-day Kepler light curves, faculae on, no noise.
+Athena jobs 178155-178158, 178482-178483. R_per for main-sequence stars below 6500 K (150 per arm):
+
+| arm | R_per 5 / 50 / 95% [ppt] | bimodality of log R_per | spots median / max | rho(R_per, Ro) | rho(R_per, Spot Max Area) |
+|---|---|---|---|---|---|
+| old rule (500 cap) | 1.03 / 6.59 / 23.8 | 0.42 | 270 / 500 | -0.25 | +0.75 |
+| f_sun = 0.003 | 1.04 / 4.66 / 16.3 | 0.30 | 210 / 5591 | -0.59 | +0.40 |
+| f_sun = 0.01 | 2.16 / 9.94 / 28.9 | 0.37 | 674 / 11600 | -0.56 | +0.49 |
+| f_sun = 0.029 | 4.38 / 17.8 / 48.5 | 0.39 | 1946 / 14860 | -0.53 | +0.50 |
+| McQuillan 2014 | 0.95 / 5.6 / 22.7 | | | | |
+
+Findings:
+
+1. **The second amplitude peak is gone.** Sarle's coefficient drops from 0.42 to 0.30
+   (0.555 would suggest two modes). Amplitude now follows the Rossby number (rho -0.25 ->
+   -0.59) instead of mostly the spot-size draw (+0.75 -> +0.40).
+2. **f_sun = 0.029 (spectroscopic level) is ruled out:** median 3x Kepler.
+3. **McQuillan sets f_sun ~ 0.004-0.006.** R_per scales as f_sun^0.63 at the median and
+   f_sun^0.48 at the 95th percentile (from the 0.003 and 0.01 runs). Matching the median
+   needs 0.004 and the 95th percentile 0.006. McQuillan counts only stars with detected
+   periods, which favours large amplitudes. **Default: f_sun = 0.005.**
+4. **Open: the shape vs Masuda 2022 does not match.** For 0.9-1.1 M_sun stars (about 10 per
+   Ro bin per arm), median R_per is flat up to Ro/Ro_sun ~ 0.8 and then falls with
+   d ln R / d ln Ro ~ -1. Masuda finds a ~10 ppt plateau at 0.2-0.4 and slopes of -2.5 to
+   -4.5 above 0.4. The plateau level matches f_sun = 0.01 (10.4 ppt) better than 0.003
+   (5.0 ppt). The likely cause is the coverage slope, not the level: Cao & Pinsonneault's
+   -0.88 is fit only below Ro/Ro_sun ~ 0.2, and a steeper slope above ~0.4 would match
+   Masuda. That needs its own run.
+
+Caveats: no photometric noise, no period-detection selection, 150 stars per arm.
+
+**Memory.** The first f_sun = 0.01 / 0.029 runs hung at the 16 GB job limit. The rotator kept
+every spot's position at every step (n_steps x n_spots x 3), only for the `plot_map`
+figure: ~17 GB at 48000 steps and ~14700 spots including burn-in. A killed worker hangs the
+multiprocessing pool rather than failing the job. The positions are now kept only with
+`plot_map`. Per-task peak memory fell from 10-16.6 GB to 1.8-2.7 GB.
