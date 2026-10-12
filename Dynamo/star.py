@@ -106,6 +106,8 @@ class Star:
         self.wavelength_lower_limit = self._get_config_value('general', 'wavelength_lower_limit', float)
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
+        # spot-count limit for coverage-driven spot maps (bigger spots above it)
+        self.max_spots = self._get_optional('general', 'max_spots', int, 10000)
         # exact spot/facula area per grid cell (nbspectra.exact_spot_coverage); False
         # restores the original approximation, which ripples at P_rot / cells-per-ring
         self.exact_coverage = self._get_optional(
@@ -369,6 +371,8 @@ class Star:
         self.has_dynamo = bool(params_dict.get('Has Dynamo', True))
         if 'Spot Max Area' in params_dict:
             self.spot_max_area = float(params_dict['Spot Max Area'])
+        cov = params_dict.get('Spot Coverage pct', None)     # % of the surface
+        self.spot_coverage = float(cov) / 100 if cov is not None and np.isfinite(float(cov)) else None
         # Faculae (defaults: values from star.conf)
         self.facular_area_ratio = float(params_dict.get('Facula Q', self.facular_area_ratio))
         self.facula_contrast_scale = float(params_dict.get('Facula Contrast Scale', self.facula_contrast_scale))
@@ -441,9 +445,34 @@ class Star:
         # UPDATE: Scaling by R^2 led to unrealistic dips for large stars (e.g. R=2 -> 4x area).
         # We now keep max_area constant in terms of angular size/fractional coverage relative to the star itself.
         # This assumes spot_max_area is defined as a capability of the star's dynamo to produce spots of a certain *angular* size.
-        scaled_max_area = self.spot_max_area 
+        scaled_max_area = self.spot_max_area
 
-        if not getattr(self, 'has_dynamo', True):
+        # Number of spots from the star's time-mean spot coverage (create_data
+        # 'Spot Coverage pct' column, docs/spot_coverage.md): Poisson around the count
+        # that gives that coverage. Above max_spots the spots are made larger
+        # instead (same coverage, fewer and bigger spots) to bound the run time.
+        # Spots also emerge during a burn-in before t = 0 (2x the longest spot or
+        # facula decay time), so coverage is already stationary when the light curve starts.
+        nspots = None
+        burn = 0
+        self.spot_area_boost = 1.0
+        self.nspots_expected = np.nan
+        coverage = getattr(self, 'spot_coverage', None)
+        if coverage is not None and getattr(self, 'has_dynamo', True):
+            tau_e = min(2, self.rotation_period * self.spots_decay_time / 10)
+            tau_d = max(self.rotation_period * self.spots_decay_time, 50)
+            tau_f = tau_d * self.facula_lifetime_ratio if self.facular_area_ratio > 0 else 0.0
+            burn = int(np.ceil(2 * max(tau_d, tau_f)))
+            scaled_max_area, self.spot_area_boost = spots.area_for_max_spots(
+                coverage, ndays, scaled_max_area, tau_e, tau_d, self.max_spots)
+            self.nspots_expected = float(spots.nspots_for_coverage(coverage, ndays + burn, scaled_max_area,
+                                                                    tau_e, tau_d))
+            rng_n = np.random.default_rng([0 if self.seed is None else self.seed, 59])
+            nspots = int(rng_n.poisson(self.nspots_expected))
+        self.spot_max_area_used = float(scaled_max_area)
+        self.spot_burn_days = burn
+
+        if not getattr(self, 'has_dynamo', True) or nspots == 0:
             # No spot dynamo (hot or evolved star): immaculate surface.
             self.spot_map = np.zeros((0, SPOT_MAP_NCOLS))
             self.reference_time = 0
@@ -452,7 +481,8 @@ class Star:
 
         s = spots.SpotsGenerator(max_area=scaled_max_area)
         regions = s.emerge_regions(
-            ndays=ndays,
+            ndays=ndays + burn,
+            nspots=nspots,
             activity_level=self.activity,
             cycle_period=self.cycle_len,
             cycle_overlap=self.cycle_overlap,
@@ -465,8 +495,11 @@ class Star:
             lat_width=getattr(self, 'lat_width', None),
             lat_drift=getattr(self, 'lat_drift', 0.0),
         )
-        ref_time = regions[0]['nday'] if len(regions) > 0 else 0
-        regions['nday'] -= ref_time
+        if coverage is not None:
+            regions['nday'] -= burn                 # burn-in spots emerge at t < 0
+        else:
+            ref_time = regions[0]['nday'] if len(regions) > 0 else 0
+            regions['nday'] -= ref_time
         self.reference_time = 0
         spots_config = np.zeros((len(regions), SPOT_MAP_NCOLS))
         spots_config[:, 0] = regions['nday']

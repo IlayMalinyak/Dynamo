@@ -99,6 +99,33 @@ def latitude_population(teff, prot, butterfly, pop, rng):
     drift = np.where(butterfly, pop["drift"], 0.0)
     return rossby, mu, width, drift
 
+# Time-mean spot coverage (fraction of the whole surface) vs Rossby number; sets the
+# number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star:
+#   f_i = f_sun * min(Ro_i/Ro_sun, ro_sat)^-slope * 10^N(0, scatter_dex), clipped to f_max
+# with Ro in units of the solar value (Cranmer & Saar 2011 tau_c here).
+# Shape: Cao & Pinsonneault 2022 (MNRAS 517, 2165), Pleiades APOGEE fit eq. 5,
+#   f = 0.0634 Ro^-0.881 above log Ro = -0.729, 0.278 below; their log Ro_sun = 0.39,
+#   so the knee is at Ro/Ro_sun = 10^(-0.729-0.39) = 0.076; scatter 0.059/0.278 = 21% -> 0.09 dex
+#   (saturated stars). Their fit is constrained only for Ro/Ro_sun < ~0.2.
+# Level: f_sun = 0.003 is the resolved sunspot coverage at solar maximum
+#   (0.28%, Shapiro et al. 2014, A&A, doi:10.1051/0004-6361/201323086). The spectroscopic level of the same fit at
+#   Ro_sun is 0.029 (~10x higher; also M67 solar analogues 0.020 +- 0.011, Cao & P. 2022);
+#   which level gives Kepler-like amplitudes is a calibration question (docs/spot_coverage.md).
+# model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500]).
+SPOT_COVERAGE_DEFAULT = dict(model="rossby", f_sun=0.003, slope=0.881, ro_sat=0.076,
+                             scatter_dex=0.09, f_max=0.5)
+
+
+def spot_coverage_population(rossby, has_dynamo, cfg, rng):
+    """Per-star time-mean spot coverage (fraction of the surface); NaN for model 'legacy'."""
+    n = len(rossby)
+    if cfg["model"] == "legacy":
+        return np.full(n, np.nan)
+    x = np.maximum(np.asarray(rossby, dtype=float) / ROSSBY_SUN, cfg["ro_sat"])
+    f = cfg["f_sun"] * x ** (-cfg["slope"]) * 10 ** rng.normal(0.0, cfg["scatter_dex"], n)
+    return np.where(has_dynamo, np.minimum(f, cfg["f_max"]), 0.0)
+
+
 def is_main_sequence(teff, logg):
     """
     Condition for dwarfs (Main Sequence) vs Giants from Ciardi et al. 2011.
@@ -216,10 +243,12 @@ def calculate_cdpp(L, distance, Nlc):
 
 
 def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0,
-                     q_activity_dep=False, latitude_config=None):
+                     q_activity_dep=False, latitude_config=None,
+                     coverage_config=None):
     """Generate simulation data and save distributions.
 
     latitude_config: dict overriding LATITUDE_POP_DEFAULT (spot-latitude population);
+    coverage_config: dict overriding SPOT_COVERAGE_DEFAULT (spot coverage vs Rossby);
     the resolved hyperparameters are written to <root>/population.json.
     """
     logger.info(f"Generating simulation data for {Nlc} light curves")
@@ -353,8 +382,14 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
         theta_high = np.clip(lat_mean + 2 * lat_width, theta_low + 1.0, 90.0)
     else:
         lat_mean = lat_width = lat_drift = np.full(Nlc, np.nan)
+    # Spot coverage population (separate generator)
+    rng_cov = np.random.default_rng([int(base_seed), 53])
+    cov_pop = dict(SPOT_COVERAGE_DEFAULT)
+    cov_pop.update(coverage_config or {})
+    spot_coverage = spot_coverage_population(rossby, has_dynamo, cov_pop, rng_cov)
     with open(os.path.join(root, "population.json"), "w") as f:
-        json.dump({"latitude": pop, "rossby_sun": float(ROSSBY_SUN), "base_seed": int(base_seed),
+        json.dump({"latitude": pop, "spot_coverage": cov_pop, "rossby_sun": float(ROSSBY_SUN),
+                   "base_seed": int(base_seed),
                    "n_stars": int(Nlc)}, f, indent=2)
 
     # Stitch this all together and write the simulation properties to file
@@ -411,6 +446,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims['Lat Mean'] = lat_mean       # deg, NaN for the band model
     sims['Lat Width'] = lat_width     # deg
     sims['Lat Drift'] = lat_drift     # deg over a cycle (butterfly stars)
+    sims['Spot Coverage pct'] = 100 * spot_coverage   # time-mean % of the surface, NaN = legacy count rule
 
 
     sims = pd.DataFrame.from_dict(sims)
@@ -692,6 +728,12 @@ def simulate_one(models_root,
                 'facula_q': float(sm.facular_area_ratio),
                 'facula_contrast_scale': float(sm.facula_contrast_scale),
                 'facula_lifetime_ratio': float(sm.facula_lifetime_ratio),
+                'spot_coverage': float(sim_row.get('Spot Coverage pct', np.nan)) / 100,
+                'n_spots': int(len(sm.spot_map)),
+                'n_spots_expected': float(getattr(sm, 'nspots_expected', np.nan)),
+                'spot_area_boost': float(getattr(sm, 'spot_area_boost', 1.0)),
+                'spot_burn_days': int(getattr(sm, 'spot_burn_days', 0)),
+                'spot_max_area_used': float(getattr(sm, 'spot_max_area_used', sm.spot_max_area)),
                 'mean_ff_sp': float(np.mean(sm.results['ff_sp'])),
                 'mean_ff_fc': float(np.mean(sm.results['ff_fc'])),
             },
@@ -821,6 +863,9 @@ def main():
     parser.add_argument('--latitude_config', type=str, default=None,
                         help='JSON file (or inline JSON) overriding the spot-latitude population '
                              '(keys of LATITUDE_POP_DEFAULT; numbers or [lo, hi] ranges)')
+    parser.add_argument('--coverage_config', type=str, default=None,
+                        help='JSON file or inline JSON overriding SPOT_COVERAGE_DEFAULT '
+                             '(spot coverage vs Rossby; {"model": "legacy"} = old spot-count rule)')
     parser.add_argument('--q_activity_dep', action='store_true',
                         help='Make the facular area ratio Q decrease with activity (Q * ar^-0.3)')
     parser.add_argument('--start', type=int, default=None,
@@ -878,7 +923,8 @@ def main():
         sims = generate_simdata(args.dataset_dir, args.num_simulations, logger,
                                 add_noise=args.add_noise, base_seed=args.base_seed,
                                 q_activity_dep=args.q_activity_dep,
-                                latitude_config=load_latitude_config(args.latitude_config))
+                                latitude_config=load_latitude_config(args.latitude_config),
+                                coverage_config=load_latitude_config(args.coverage_config))
     
     feh_range = (sims['FeH'].min(), sims['FeH'].max())
     logg_range = (sims['logg'].min(), sims['logg'].max())

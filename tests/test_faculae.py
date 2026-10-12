@@ -31,8 +31,14 @@ def _facula_only(incl_deg=90.0, colat=90.0, fac_rad=10.0):
 
 def test_B0_q0_reproduces_master():
     from make_reference_lc import run_scenario
+    from Dynamo import rotator
     ref = np.load(DATA / "ref_lc_noQ.npz")
-    t, f = run_scenario(exact=False)
+    keep = rotator.MIN_SPOT_RAD
+    rotator.MIN_SPOT_RAD = 0.0      # master kept negligible spots (skipping them changes flux by ~1e-8)
+    try:
+        t, f = run_scenario(exact=False)
+    finally:
+        rotator.MIN_SPOT_RAD = keep
     assert np.allclose(t, ref["t"])
     assert np.allclose(f, ref["lc"], rtol=0, atol=1e-12), np.abs(f - ref["lc"]).max()
 

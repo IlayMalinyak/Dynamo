@@ -12,6 +12,7 @@ FASMA-synthesis/
 .showyourwork/
 .idea/
 dataset_faculae_smoke*/
+dataset_cov_*/
 tests/temp_star.conf
 tests/images/
 plots/

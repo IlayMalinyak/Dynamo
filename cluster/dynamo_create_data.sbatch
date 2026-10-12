@@ -14,6 +14,15 @@
 #   sbatch --array=0-7 cluster/dynamo_create_data.sbatch dataset_faculae_smoke 1000
 #   sbatch --array=0-7 cluster/dynamo_create_data.sbatch dataset_faculae_smoke_noQ 1000
 #
+# Spot-coverage calibration (docs/spot_coverage.md; four paired arms of 200 stars;
+# the f0290 arm has up to 10000 spots per star (~3.5 min per star), so it uses half-size slices):
+#   python scripts/make_coverage_tables.py --n 200 --out dataset_cov
+#   bash cluster/stage_run_dir.sh dataset_cov_legacy dataset_cov_f0030 dataset_cov_f0100 dataset_cov_f0290
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_legacy 1000 25
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_f0030 1000 25
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_f0100 1000 25
+#   sbatch --array=0-15 cluster/dynamo_create_data.sbatch dataset_cov_f0290 1000 13
+#
 # l40s-public = athena-post only, which does not see /rg (cd failed on all 16
 # tasks of the first submission). So the job runs from a copy under /home:
 #   bash cluster/stage_run_dir.sh      # code (git HEAD) + dataset tables -> RUN_DIR

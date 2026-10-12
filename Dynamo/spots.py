@@ -72,6 +72,45 @@ def exponential_latitudes(minlat, maxlat, phase):
     return latavg, latrms
 
 
+SURFACE_DEG2 = 4 * np.pi * (180 / np.pi) ** 2      # whole sphere, 41253 deg^2
+
+
+def mean_spot_area_deg2(max_area, nbins=5, delta_lnA=0.5):
+    """Mean area [deg^2] of one spot from emerge_regions.
+
+    Size bin k has bsize^2 = max_area / e^(k delta_lnA), drawn with p_k proportional
+    to e^(k delta_lnA); the spot radius (Star.generate_spot_map) is
+    sqrt(bmax) = sqrt(2.5) bsize deg. Areas are exact spherical caps."""
+    fact = np.exp(delta_lnA * np.arange(nbins))
+    p = fact / fact.sum()
+    r = np.deg2rad(np.sqrt(2.5 * np.asarray(max_area, dtype=float)[..., None] / fact))
+    return ((180 / np.pi) ** 2 * 2 * np.pi * (1 - np.cos(r)) * p).sum(-1)
+
+
+def spot_area_lifetime_days(tau_emerge, tau_decay):
+    """Time integral of A(t)/A_max for the gaussian law (radius factor exp(-t^2/tau^2))."""
+    return np.sqrt(np.pi / 8) * (tau_emerge + tau_decay)
+
+
+def nspots_for_coverage(coverage, ndays, max_area, tau_emerge, tau_decay):
+    """Expected number of emerged spots that gives a time-mean spot coverage
+    `coverage` (fraction of the whole stellar surface) over `ndays`."""
+    return (coverage * SURFACE_DEG2 * ndays
+            / (mean_spot_area_deg2(max_area) * spot_area_lifetime_days(tau_emerge, tau_decay)))
+
+
+def area_for_max_spots(coverage, ndays, max_area, tau_emerge, tau_decay, max_spots):
+    """Smallest max_area (>= the given one) that reaches `coverage` with at most
+    `max_spots` spots. Returns (max_area, boost factor)."""
+    m = float(max_area)
+    for _ in range(50):
+        n = nspots_for_coverage(coverage, ndays, m, tau_emerge, tau_decay)
+        if n <= max_spots * (1 + 1e-6):
+            break
+        m *= n / max_spots          # mean area ~ max_area for small caps; iterate for the rest
+    return m, m / float(max_area)
+
+
 class SpotsGenerator(object):
     """Create a blank surface to emerge active regions and evolve star spots.
 

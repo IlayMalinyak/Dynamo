@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import astropy.units as u
 from tqdm import tqdm
 
+# spots (and faculae) with a smaller angular radius [rad] are skipped: area ~1e-8 of the disk
+MIN_SPOT_RAD = 1e-4
+
 D2S = 1*u.day.to(u.s)
 
 def gaussian_spots(t, tau_emerge, tau_decay):
@@ -119,11 +122,14 @@ class Rotator():
             vec_spot[:, :] = np.array([xspot, yspot, zspot]).T  # spot center in cartesian
 
             # Compute visibility of spots
+            # A spot counts if any part of it (or its facula) is on the visible hemisphere
+            # and it is not negligibly small: gaussian-law radii never reach zero, and
+            # long-decayed spots (radius < MIN_SPOT_RAD, ~1e-8 of the disk) would otherwise
+            # be carried through every later time step.
             vis = np.zeros(len(vec_spot) + 1)
-            for i in range(len(vec_spot)):
-                dist = m.acos(np.dot(vec_spot[i], np.array([1, 0, 0])))
-                if (dist - max(spot_pos[i, 2], spot_pos[i, 3])) <= (np.pi / 2):
-                    vis[i] = 1.0
+            r_max = np.maximum(spot_pos[:, 2], spot_pos[:, 3])
+            dist = np.arccos(np.clip(vec_spot[:, 0], -1.0, 1.0))
+            vis[:-1] = ((dist - r_max <= np.pi / 2) & (r_max > MIN_SPOT_RAD)).astype(float)
 
             # Check visibility based on ALL planets
             if len(all_planet_pos) > 0:
