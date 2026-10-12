@@ -85,6 +85,12 @@ unresolved groups of smaller spots. The per-star config records `n_spots`,
 `n_spots_expected`, `spot_area_boost`, `spot_max_area_used` and `spot_burn_days`.
 `--coverage_config '{"model": "legacy"}'` restores the old rule.
 
+**Memory.** The rotator used to keep every spot's position at every time step
+(n_steps x n_spots x 3 floats), used only by the `plot_map` figure. At 48000 steps and
+~14000 spots (burn-in included) that is ~16 GB, which exceeded the 16 GB job limit and
+hung the worker pool in the first f_sun = 0.01 / 0.029 calibration runs. It is now kept
+only when `plot_map` is on; a 13245-spot star peaks at 0.41 GB.
+
 ## Population preview (5000 stars, no light curves; counts per 1000-day window, burn-in excluded)
 
 | f_sun | coverage % (5 / 50 / 95) | spots per 1000 d (5 / 50 / 95) | above 3000 / 10000 spots |

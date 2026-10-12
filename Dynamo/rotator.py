@@ -47,7 +47,10 @@ class Rotator():
         filling_pl = np.zeros(len(self.star.obs_times))
         filling_fc = np.zeros(len(self.star.obs_times))
 
-        spots_positions_arr = np.zeros((len(self.star.obs_times), len(self.star.spot_map), 3))
+        # Spot positions at every step (nt x nspots x 3) are only needed for the map plot;
+        # at 48000 steps and 10^4 spots they would take ~12 GB.
+        spots_positions_arr = (np.zeros((len(self.star.obs_times), len(self.star.spot_map), 3))
+                               if plot_map else None)
         
         # Array to store pixel coverage for spectral epochs
         epoch_coverage = {} 
@@ -82,7 +85,8 @@ class Rotator():
             else:
                 spot_pos = self.compute_spot_position_vec(t)  # compute the position of all spots
 
-            spots_positions_arr[k, :, :] = spot_pos[:, :3]
+            if spots_positions_arr is not None:
+                spots_positions_arr[k, :, :] = spot_pos[:, :3]
 
             # Compute spot vectors
             # Use co-inclination (90-i) because the projection logic assumes i=0 is Equator-on?
