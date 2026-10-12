@@ -105,7 +105,10 @@ def main():
                 "slope -4.6 above 0.5). Plateau and slope columns above: 4000-6250 K dwarfs.\n\n" + md_table(ro.fillna("-")) + "\n")
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    colors = ["k", "tab:blue", "tab:orange", "tab:red", "tab:green", "tab:purple"]
+    colors = ["k", "tab:blue", "tab:orange", "tab:red", "tab:green", "tab:purple",
+              "tab:brown", "tab:pink", "tab:olive", "tab:cyan"]
+    if t.arm.nunique() > len(colors):
+        raise SystemExit(f"at most {len(colors)} arms per figure")
     bins = np.logspace(-2, 2, 33)
     for c, (arm, g) in zip(colors, t.groupby("arm", sort=False)):
         ms = g[(g.evo == "dwarf") & (g.teff < 6500) & (g.rper_ppt > 0)]
@@ -124,6 +127,9 @@ def main():
     ax2.axvspan(0.2, 0.5, color="0.8", alpha=0.5, zorder=0)
     xs = np.array([0.5, 0.8])
     ax2.plot(xs, MASUDA[0] * (xs / 0.5) ** MASUDA[1], color="0.3", ls="--", lw=2.5)
+    # the Sun: median R_var 0.65-0.7 ppt (Basri 2013; Reinhold 2020), bar = 20th-95th pct (0.24-1.7)
+    ax2.errorbar([1.0], [0.67], yerr=[[0.67 - 0.24], [1.7 - 0.67]], fmt="*", ms=20, color="gold",
+                 mec="k", ecolor="k", capsize=4, zorder=5)
     ax2.set_xscale("log"); ax2.set_yscale("log")
     ax2.set_xlabel(r"Ro / Ro$_\odot$")
     ax2.set_ylabel(r"R$_{\rm per}$ [ppt]  (0.9-1.1 M$_\odot$)")

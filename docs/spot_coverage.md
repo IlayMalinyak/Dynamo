@@ -182,7 +182,7 @@ spots or too little facular cancellation), which this calibration absorbs into f
 **Superseded by the Sun calibration** (docs/sun_calibration.md): the population's spots at
 Ro_sun were ~3x darker and ~10x larger than the Sun's. Spot properties now scale with
 activity (**the 0.2-1 Ro/Ro_sun transition range is an assumption, not a measurement**;
-see docs/sun_calibration.md), the law is anchored at f(Ro_sun) = 0.1%, and f_break is being recalibrated. The
+see docs/sun_calibration.md), the law is anchored at f(Ro_sun) = 0.1%, and f_break was recalibrated (below). The
 `dataset_cov_broken` confirmation run was not made.
 
 Caveats: no photometric noise, no period-detection selection, 150 stars per arm.
@@ -192,3 +192,34 @@ every spot's position at every step (n_steps x n_spots x 3), only for the `plot_
 figure: ~17 GB at 48000 steps and ~14700 spots including burn-in. A killed worker hangs the
 multiprocessing pool rather than failing the job. The positions are now kept only with
 `plot_map`. Per-task peak memory fell from 10-16.6 GB to 1.8-2.7 GB.
+
+## Calibration of f_break with activity-scaled spots (2026-10-12)
+
+Runs `dataset_cov_act_fb0300/0600/1200`: the default model (Sun-anchored broken law,
+activity-scaled spot properties) with f_break = 0.03 / 0.06 / 0.12, same 200 stars as the
+arms above. `python scripts/coverage_calibration_report.py dataset_cov_legacy
+dataset_cov_act_fb0300 dataset_cov_act_fb0600 dataset_cov_act_fb1200 --out
+docs/spot_coverage_calibration_fbreak` (all seven arms: `docs/spot_coverage_calibration_act`).
+Light curves: `docs/lc_gallery_fb0600.png` (`scripts/lc_gallery.py`).
+
+| arm | plateau 0.2-0.5 [ppt] | slope 0.5-0.8 | R_per 0.8-1.0 Ro_sun, 0.9-1.1 M_sun [ppt] | R_per 5 / 50 / 95% [ppt] | stars above max_spots |
+|---|---|---|---|---|---|
+| target | 10.8 (Masuda 2022) | -4.6 +- 0.9 (Masuda, Kp < 12) | 0.65-0.7 (Sun) | 0.95 / 5.6 / 22.7 (McQuillan 2014) | |
+| f_break 0.03 | 7.3 | -2.9 | 0.57 | 0.25 / 4.5 / 22.9 | 2% |
+| **f_break 0.06 (default)** | **10.8** | **-3.9** | **0.70** | **0.25 / 7.0 / 33.4** | **8%** |
+| f_break 0.12 | 15.8 | -4.8 | 0.63 | 0.25 / 9.7 / 43.2 | 17% |
+
+**Chosen: f_break = 0.06** [own calibration]. It matches the Masuda plateau, the slope is
+within 1 sigma, and Sun-like stars sit at the Sun's median.
+
+Not matched:
+- McQuillan's 95th percentile (33 vs 22.7 ppt; the fast active rotators).
+- McQuillan's 5th percentile (0.25 vs 0.95 ppt). This comparison is biased: McQuillan lists
+  only stars with a detected period, and quiet stars are missing from it.
+- The steep drop above Ro/Ro_sun 0.5 comes partly from the [own assumption] 0.2-1 range of
+  the spot-property scaling, not from f_break alone.
+- 8% of stars exceed max_spots and get larger spots instead of more spots.
+- ~200 stars per arm; the Ro-bin medians rest on few stars.
+
+Flat light curves (24 of 200 in the 0.06 arm) are all stars without a dynamo (inactive
+giants, Teff > 7000 K). Every spotted star varies.

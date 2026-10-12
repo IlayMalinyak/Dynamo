@@ -110,9 +110,7 @@ which solar-property spots give the Sun's median R_per. Between Ro/Ro_sun = 0.5 
 is a power law from `f_break` to `f_tail`. `f_break` (plateau level) is the remaining
 calibration parameter.
 
-**Calibration runs (to do):** `dataset_cov_act_fb0300`, `_fb0600`, `_fb1200` (f_break
-0.03 / 0.06 / 0.12), the same 200 stars as the earlier arms
-(`python scripts/make_coverage_tables.py --arms act_fb0300 act_fb0600 act_fb1200`).
-Targets: Masuda plateau 10.8 ppt and slope -4.6 +- 0.9, McQuillan percentiles, and the
-Sun-like stars' R_per near the Sun's 0.65-0.7 ppt. A rough estimate (amplitude ~
-contrast x sqrt(area x coverage)) puts the plateau at f_break ~ 0.07.
+**Calibration (done, 2026-10-12):** runs `dataset_cov_act_fb0300`, `_fb0600`, `_fb1200`
+(f_break 0.03 / 0.06 / 0.12). **f_break = 0.06**: Masuda plateau 10.8 ppt (target 10.8), slope
+-3.9 (target -4.6 +- 0.9), Sun-like stars 0.70 ppt (Sun 0.65-0.7). The rough estimate above
+gave ~0.07. Details and the mismatches (McQuillan 95th percentile high): docs/spot_coverage.md.

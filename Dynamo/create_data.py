@@ -140,8 +140,9 @@ def latitude_population(teff, prot, butterfly, pop, rng):
 #   scatter_dex 0.09 [paper] Cao & P. 2022, 21% at saturation. [own assumption] the same
 #     scatter at all Ro.
 #   f_max 0.5 [paper] TiO saturation 40-50%, Fang et al. 2016 (MNRAS 463, 2494).
-#   f_break 0.06 [own calibration] PROVISIONAL, middle of the arms 0.03 / 0.06 / 0.12
-#     (targets: Masuda plateau 10.8 ppt, McQuillan et al. 2014 percentiles).
+#   f_break 0.06 [own calibration] arms 0.03 / 0.06 / 0.12 (docs/spot_coverage.md): 0.06
+#     gives the [paper] Masuda 2022 plateau (10.8 ppt) and slope -3.9 (Masuda -4.6 +- 0.9);
+#     depends on the [own assumption] 0.2-1 range of SPOT_PROPS_DEFAULT.
 #   [own assumption] the same law for dwarfs, subgiants and active giants.
 # Spot properties scale with activity (props "activity"; SPOT_PROPS_DEFAULT below).
 # model "rossby": single law f_sun * max(x, ro_sat)^-slope; f_sun 0.005 [own calibration]

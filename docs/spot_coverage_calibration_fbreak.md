@@ -1,0 +1,24 @@
+# Spot-coverage calibration readout
+
+R_per of clean 1000-d light curves (faculae on, no noise). Main sequence, Teff < 6500 K.
+
+|  | arm | N (MS, <6500 K) | R_per 5% [ppt] | 50% | 95% | bimodality (log R_per) | spots median | spots max | boosted | rho(R_per, Ro) | rho(R_per, area) | plateau 0.2-0.5 [ppt] | slope 0.5-0.8 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | dataset_cov_legacy | 150 | 1.03 | 6.59 | 23.8 | 0.42 | 270 | 500 | 0% | -0.25 | +0.75 | 9.4 | +0.3 |
+| 1 | dataset_cov_act_fb0300 | 150 | 0.25 | 4.48 | 22.9 | 0.49 | 1284 | 13041 | 2% | -0.81 | +0.76 | 7.3 | -2.9 |
+| 2 | dataset_cov_act_fb0600 | 150 | 0.25 | 6.97 | 33.4 | 0.55 | 2174 | 17587 | 8% | -0.82 | +0.75 | 10.8 | -3.9 |
+| 3 | dataset_cov_act_fb1200 | 150 | 0.25 | 9.69 | 43.2 | 0.59 | 3988 | 27065 | 17% | -0.83 | +0.74 | 15.8 | -4.8 |
+| 4 | McQuillan 2014 / Masuda 2022 |  | 0.95 | 5.6 | 22.7 |  |  |  |  |  |  | 10.8 | -4.6 |
+
+R_per median vs Ro/Ro_sun, 0.9-1.1 M_sun (Masuda 2022: ~10.8 ppt plateau at 0.2-0.5, slope -4.6 above 0.5). Plateau and slope columns above: 4000-6250 K dwarfs.
+
+|  | Ro/Ro_sun | dataset_cov_act_fb0300 | dataset_cov_act_fb0600 | dataset_cov_act_fb1200 | dataset_cov_legacy |
+|---|---|---|---|---|---|
+| 0 | 0.05-0.1 | 11.57 | 13.19 | 19.07 | 2.68 |
+| 1 | 0.1-0.2 | - | - | - | - |
+| 2 | 0.2-0.4 | 7.28 | 11.62 | 18.38 | 4.36 |
+| 3 | 0.4-0.6 | 6.19 | 8.89 | 13.13 | 6.63 |
+| 4 | 0.6-0.8 | 2.02 | 2.52 | 2.91 | 8.10 |
+| 5 | 0.8-1.0 | 0.57 | 0.70 | 0.63 | 2.85 |
+| 6 | 1.0-1.5 | 0.43 | 0.43 | 0.43 | 2.54 |
+| 7 | 1.5-3.0 | 0.91 | 0.91 | 0.91 | 25.50 |

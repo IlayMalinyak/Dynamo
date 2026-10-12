@@ -26,7 +26,7 @@ reference.
 | f_tail | 0.1% at Ro_sun | own calibration (Sun anchor, docs/sun_calibration.md) |
 | beyond Ro_sun | slope 0.881 | own (Cao's slope reused where no data exist) |
 | coverage scatter | 0.09 dex at all Ro | [paper] Cao & P. at saturation; own: constant in Ro |
-| f_break | 0.06, provisional | own calibration (runs act_fb0300/0600/1200) |
+| f_break | 0.06 | own calibration (runs act_fb0300/0600/1200, docs/spot_coverage.md); depends on the 0.2-1 range above |
 | same law for dwarfs, subgiants, giants | - | own |
 | tau_c conventions | only Ro/Ro_sun carried across papers | own |
 | old single law | f_sun 0.005 | own calibration vs McQuillan 2014 |
