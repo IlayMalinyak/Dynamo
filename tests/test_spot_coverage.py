@@ -7,7 +7,7 @@ import numpy as np
 
 from helpers import make_star
 from Dynamo import spots
-from Dynamo.create_data import SPOT_COVERAGE_DEFAULT, ROSSBY_SUN
+from Dynamo.create_data import SPOT_COVERAGE_DEFAULT, ROSSBY_SUN, spot_coverage_law
 
 _CACHE = {}
 
@@ -58,18 +58,28 @@ def test_max_spots_keeps_coverage():
 def test_population_follows_rossby_law():
     sims, pop = _table(None)
     c = pop["spot_coverage"]
-    assert c["model"] == "rossby" and c["f_sun"] == SPOT_COVERAGE_DEFAULT["f_sun"]
+    assert c["model"] == "broken" and c["f_break"] == SPOT_COVERAGE_DEFAULT["f_break"]
     f = sims["Spot Coverage pct"].values / 100
     dyn = sims["Has Dynamo"].values.astype(bool)
     assert (f[~dyn] == 0).all() and (f[dyn] > 0).all()
     x = sims.Rossby.values / ROSSBY_SUN
-    near_sun = dyn & (x > 0.8) & (x < 1.25)
-    assert abs(np.median(f[near_sun]) / c["f_sun"] - 1) < 0.25
+    plateau = dyn & (x > c["ro_flat"]) & (x < c["ro_break"])
+    assert abs(np.median(f[plateau]) / c["f_break"] - 1) < 0.1
     sat = dyn & (x < c["ro_sat"])
-    plateau = c["f_sun"] * c["ro_sat"] ** -c["slope"]
-    assert abs(np.median(f[sat]) / plateau - 1) < 0.1
-    resid = np.log10(f[dyn]) - np.log10(c["f_sun"] * np.maximum(x[dyn], c["ro_sat"]) ** -c["slope"])
+    assert abs(np.median(f[sat]) / (c["f_break"] * (c["ro_sat"] / c["ro_flat"]) ** -c["slope"]) - 1) < 0.1
+    resid = np.log10(f[dyn]) - np.log10(spot_coverage_law(x[dyn], c))
     assert abs(resid.std() - c["scatter_dex"]) < 0.01
+
+
+def test_broken_law_shape():
+    c = SPOT_COVERAGE_DEFAULT
+    x = np.array([0.01, c["ro_sat"], c["ro_flat"], 0.35, c["ro_break"], c["ro_tail"], 2 * c["ro_tail"]])
+    f = spot_coverage_law(x, c)
+    assert f[0] == f[1] and np.isclose(f[2], c["f_break"]) and f[3] == f[4] == c["f_break"]
+    assert np.isclose(f[5], c["f_break"] * (c["ro_tail"] / c["ro_break"]) ** -c["slope_unsat"])
+    assert np.isclose(f[6], f[5] * 2 ** -c["slope_tail"])
+    r = spot_coverage_law(x, dict(c, model="rossby"))
+    assert np.isclose(spot_coverage_law(1.0, dict(c, model="rossby")), c["f_sun"]) and r[0] == r[1]
 
 
 def test_legacy_model_and_other_draws_unchanged():

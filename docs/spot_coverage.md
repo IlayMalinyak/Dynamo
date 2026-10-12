@@ -21,7 +21,8 @@ stars. That is much flatter than the measured relation below.
 | f_spot, M67 (solar age) | GK dwarfs 0.030 +- 0.008; solar analogues (5700-5900 K) 0.020 +- 0.011; giants 0.003 +- 0.002 | same |
 | TiO f_spot, Pleiades | rises with decreasing Ro, saturates at 40-50% below Ro ~ 0.1 (Wright 2011 tau) | Fang et al. 2016, MNRAS 463, 2494 (arXiv:1608.05452) |
 | f_spot vs age, Kepler/K2 clusters | f ~ 0.014 (t/Gyr)^-0.37; f ~ 0.02 SmAmp[%]^0.74 | Morris 2020, ApJ, doi:10.3847/1538-4357/ab79a0 (arXiv:2002.09135) |
-| photometric amplitude vs Ro, solar-mass Kepler stars | R_per ~ 1% plateau for 0.2 < Ro/Ro_sun < 0.4; then d ln R_per / d ln Ro = -2.5 to -4.5 | Masuda 2022, ApJ (arXiv:2206.01595) |
+| photometric amplitude vs Ro, 4000-6250 K Kepler dwarfs (Cranmer & Saar tau_c, Ro_sun ~ 2) | all stars: R_per = 10.8 +- 0.4 ppt at Ro = 0.84 +- 0.02 (Ro/Ro_sun 0.43), slope -0.04 +- 0.09 below and -2.6 +- 0.1 above; Kp < 12 (least detection bias): break at Ro = 0.99 (0.50 Ro_sun), slope -4.6 +- 0.9 above; scatter 0.24 dex | Masuda 2022, ApJ (arXiv:2206.01595), Sec. 3.2-3.3 |
+| Sun vs Kepler solar-like stars with detected periods | median variability of the stars 5x the Sun's | Reinhold et al. 2020, Science 368, 518, doi:10.1126/science.aay3821 |
 | Kepler R_per distribution (detected periods) | 5th / 50th / 95th percentile = 950 / 5600 / 22700 ppm | McQuillan, Mazeh & Aigrain 2014, ApJS (arXiv:1402.5694) |
 | starspot lifetimes (Kepler, solar-type) | 10-350 d for spots of 0.1-2.3% of the hemisphere | Namekata et al. 2019, ApJ (arXiv:1811.10782) |
 
@@ -39,17 +40,22 @@ Two facts matter for the design:
 
 ## Model
 
-`create_data.SPOT_COVERAGE_DEFAULT`, column `Spot Coverage pct` (time-mean % of the whole surface):
+`create_data.SPOT_COVERAGE_DEFAULT`, column `Spot Coverage pct` (time-mean % of the whole surface),
+`f_i = law(Ro_i/Ro_sun) * 10^N(0, scatter_dex)`, `f_i <= f_max`, with the broken law
+(`create_data.spot_coverage_law`, model "broken"), x = Ro/Ro_sun:
 
-    f_i = f_sun * max(Ro_i/Ro_sun, ro_sat)^-slope * 10^N(0, scatter_dex),   f_i <= f_max
-
-| parameter | default | origin |
+| range | coverage | origin |
 |---|---|---|
-| f_sun | 0.005 | calibrated against McQuillan 2014 amplitudes (below); Sun at maximum is 0.003 (Shapiro 2014) |
-| slope | 0.881 | Cao & Pinsonneault 2022 eq. 5 |
-| ro_sat | 0.076 | same, converted with their log Ro_sun = 0.39 |
-| scatter_dex | 0.09 | same, 21% at saturation |
-| f_max | 0.5 | TiO saturation level, Fang 2016 |
+| x < ro_sat = 0.076 | saturated, 2.34 f_break | Cao & Pinsonneault 2022 eq. 5 knee |
+| 0.076 < x < ro_flat = 0.2 | f_break (x/0.2)^-0.881 | Cao & Pinsonneault slope (their data reach x ~ 0.2) |
+| 0.2 <= x <= ro_break = 0.5 | f_break = 0.02 | Masuda: R_per flat (slope -0.04 +- 0.09); level calibrated below |
+| 0.5 < x <= ro_tail = 0.8 | f_break (x/0.5)^-7.93 | Masuda Kp < 12: R_per slope -4.6, and R_per ~ f^0.58 per star |
+| x > 0.8 | continues with slope -0.881 | end of Masuda's steep range; the Santos sample flattens at x >~ 1 |
+
+scatter_dex = 0.09 (Cao & Pinsonneault, 21% at saturation), f_max = 0.5 (TiO saturation,
+Fang 2016). Resulting medians: 4.7% saturated, 2% on the plateau, 0.14% at x = 0.7,
+0.04% at Ro_sun. The first calibration's single law, f_sun * max(x, ro_sat)^-0.881 with
+f_sun = 0.005, remains as model "rossby".
 
 Ro uses the table's Cranmer & Saar 2011 tau_c with Ro_sun = 25.4 d / tau_c(5772 K). Only the
 ratio Ro/Ro_sun is transferred between conventions; the mass dependence of the two
@@ -94,6 +100,7 @@ unresolved groups of smaller spots. The per-star config records `n_spots`,
 | **0.005 (default)** | 0.23 / 0.78 / 3.2 (0.003 row x 5/3) | 27 / 195 / 1677 (same scaling) | - |
 | 0.01 | 0.48 / 1.55 / 6.3 | 54 / 390 / 3353 | 6% / 1% |
 | 0.029 (spectroscopic) | 1.4 / 4.5 / 18 | 156 / 1132 / 9725 | 24% / 5% |
+| **broken law (default)** | 0.019 / 0.41 / 3.0 | 3 / 84 / 2103 | 2.5% / 0%; 1% below one spot |
 
 ## Run time vs spot count
 
@@ -122,6 +129,11 @@ Athena jobs 178155-178158, 178482-178483. R_per for main-sequence stars below 65
 | f_sun = 0.029 | 4.38 / 17.8 / 48.5 | 0.39 | 1946 / 14860 | -0.53 | +0.50 |
 | McQuillan 2014 | 0.95 / 5.6 / 22.7 | | | | |
 
+Against Masuda 2022 (4000-6250 K dwarfs; `plateau` and `slope` columns of the readout):
+plateau R_per at 0.2 < Ro/Ro_sun < 0.5 is 9.4 / 5.4 / 11.5 / 19.8 ppt (old rule, 0.003,
+0.01, 0.029; Masuda 10.8) and the slope over 0.5-0.8 is +0.3 / -0.7 / -0.5 / -0.3
+(Masuda -4.6 +- 0.9).
+
 Findings:
 
 1. **The second amplitude peak is gone.** Sarle's coefficient drops from 0.42 to 0.30
@@ -132,13 +144,43 @@ Findings:
    f_sun^0.48 at the 95th percentile (from the 0.003 and 0.01 runs). Matching the median
    needs 0.004 and the 95th percentile 0.006. McQuillan counts only stars with detected
    periods, which favours large amplitudes. **Default: f_sun = 0.005.**
-4. **Open: the shape vs Masuda 2022 does not match.** For 0.9-1.1 M_sun stars (about 10 per
-   Ro bin per arm), median R_per is flat up to Ro/Ro_sun ~ 0.8 and then falls with
-   d ln R / d ln Ro ~ -1. Masuda finds a ~10 ppt plateau at 0.2-0.4 and slopes of -2.5 to
-   -4.5 above 0.4. The plateau level matches f_sun = 0.01 (10.4 ppt) better than 0.003
-   (5.0 ppt). The likely cause is the coverage slope, not the level: Cao & Pinsonneault's
-   -0.88 is fit only below Ro/Ro_sun ~ 0.2, and a steeper slope above ~0.4 would match
-   Masuda. That needs its own run.
+4. **The shape did not match Masuda 2022** (fixed below): the single -0.88 law gives an
+   R_per slope of about -0.5, against -4.6.
+
+### Slope fix: broken law
+
+In these runs, amplitude per unit coverage hardly depends on Ro (rho(R_per / f^0.58, Ro) =
+-0.11; spot size matters more, +0.41), and per star R_per ~ f^0.58 (median of the paired
+arms; 0.52-0.62 in every Ro bin, close to the sqrt(N) of spots at random longitudes). So
+Masuda's R_per law maps directly onto coverage: flat for 0.2-0.5 Ro_sun, slope
+-4.6/0.58 = -7.93 above. Masuda uses the same Cranmer & Saar tau_c as the table
+(Ro_sun ~ 2; ours 1.97), so no conversion is needed. The bright-star (Kp < 12) slope is
+used because the simulation has no detection bias; the all-star -2.6 is shallower
+because weak modulation is missed (Masuda Sec. 3.3).
+
+f_break was set by predicting each star's R_per under candidate laws, interpolating its
+log R_per vs log f between the three paired arms (slope 0.58 beyond them):
+
+| law | plateau [ppt] | slope 0.5-0.8 | R_per 5 / 50 / 95% | f(Ro_sun) |
+|---|---|---|---|---|
+| f_break 0.02, steep to 1.0 | 10.3 | -4.9 | 0.18 / 5.78 / 22.6 | 0.008% (6% of stars < 0.5 spots) |
+| **f_break 0.02, steep to 0.8 (default)** | **10.3** | **-4.9** | **0.37 / 5.78 / 22.6** | **0.04%** |
+| target | 10.8 (Masuda) | -4.6 +- 0.9 | 0.95 / 5.6 / 22.7 (McQuillan) | |
+
+One law now fits Masuda's plateau and slope and McQuillan's median and 95th percentile:
+the earlier conflict between levels (0.005 for McQuillan, 0.01 for Masuda's plateau) came
+from the slope. The 5th percentile sits below McQuillan, as expected for a catalogue of
+detected periods. Ending the steep part at 0.8 rather than 1.0 changes nothing over
+Masuda's range; it keeps Sun-like stars spotted.
+
+Open: at Ro_sun the law gives 0.04% coverage, below the Sun's resolved sunspot coverage
+(0.28% at maximum). Kepler stars near Ro_sun are themselves more variable than the Sun
+(Reinhold 2020), so the Sun is not used as an anchor. The low value may mean the
+simulation over-produces amplitude per unit spot area at low activity (e.g. too-large
+spots or too little facular cancellation), which this calibration absorbs into f.
+
+**Confirmation run (to do):** `dataset_cov_broken`, the same 200 stars with the default law
+(`python scripts/make_coverage_tables.py --arms broken`), then rerun the readout with five arms.
 
 Caveats: no photometric noise, no period-detection selection, 150 stars per arm.
 

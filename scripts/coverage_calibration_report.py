@@ -4,8 +4,9 @@
 For each arm (dataset_cov_legacy, dataset_cov_fXXXX):
   R_per percentiles of main-sequence stars below 6500 K vs McQuillan et al. 2014
   (950 / 5600 / 22700 ppm), Sarle's bimodality coefficient of log R_per, and
-  R_per vs Ro/Ro_sun for 0.9-1.1 M_sun stars vs Masuda 2022 (~1% plateau for
-  0.2 < Ro/Ro_sun < 0.4, steep decline above ~0.4).
+  R_per vs Ro/Ro_sun vs Masuda 2022 (arXiv:2206.01595; Cranmer & Saar tau_c as here):
+  for 4000-6250 K dwarfs, plateau R_per ~ 10.8 ppt for 0.2 < Ro/Ro_sun < 0.5 and
+  d ln R_per / d ln Ro = -4.6 +- 0.9 above Ro/Ro_sun = 0.50 (Kp < 12 fit).
 
   python scripts/coverage_calibration_report.py dataset_cov_legacy dataset_cov_f0030 \
       dataset_cov_f0100 dataset_cov_f0290 --out docs/spot_coverage_calibration
@@ -28,6 +29,7 @@ from faculae_smoke_report import load, norm, r_per, md_table  # noqa: E402
 from Dynamo.create_data import ROSSBY_SUN  # noqa: E402
 
 MCQ = (0.95, 5.6, 22.7)          # ppt, 5th / 50th / 95th percentile
+MASUDA = (10.8, -4.6)            # plateau [ppt], slope above Ro/Ro_sun = 0.5
 RO_BINS = [0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 3.0]
 
 plt.rcParams.update({"font.size": 15, "font.weight": "bold", "axes.labelweight": "bold",
@@ -82,20 +84,25 @@ def main():
                      "boosted": f"{(g.boost > 1).mean():.0%}",
                      "rho(R_per, Ro)": f"{stats.spearmanr(g.rper_ppt, g.ro_rel)[0]:+.2f}",
                      "rho(R_per, area)": f"{stats.spearmanr(g.rper_ppt, g.max_area)[0]:+.2f}"})
+        k = g[(g.evo == "dwarf") & g.teff.between(4000, 6250) & (g.rper_ppt > 0)]
+        a58 = k[k.ro_rel.between(0.5, 0.8)]
+        summ[-1].update({"plateau 0.2-0.5 [ppt]": f"{k[k.ro_rel.between(0.2, 0.5)].rper_ppt.median():.1f}",
+                         "slope 0.5-0.8": f"{np.polyfit(np.log(a58.ro_rel), np.log(a58.rper_ppt), 1)[0]:+.1f}"})
         sm = g[g.mass.between(0.9, 1.1)]
         for lo, hi in zip(RO_BINS[:-1], RO_BINS[1:]):
             s = sm[(sm.ro_rel >= lo) & (sm.ro_rel < hi)]
             ro_rows.append({"arm": arm, "Ro/Ro_sun": f"{lo}-{hi}", "n": len(s),
                             "R_per median [ppt]": f"{s.rper_ppt.median():.2f}" if len(s) else "-"})
-    summ.append({"arm": "McQuillan 2014", "R_per 5% [ppt]": MCQ[0], "50%": MCQ[1], "95%": MCQ[2]})
+    summ.append({"arm": "McQuillan 2014 / Masuda 2022", "R_per 5% [ppt]": MCQ[0], "50%": MCQ[1], "95%": MCQ[2],
+                 "plateau 0.2-0.5 [ppt]": MASUDA[0], "slope 0.5-0.8": MASUDA[1]})
     ro = pd.DataFrame(ro_rows).pivot(index="Ro/Ro_sun", columns="arm", values="R_per median [ppt]")
     ro = ro.loc[[f"{lo}-{hi}" for lo, hi in zip(RO_BINS[:-1], RO_BINS[1:])]].reset_index()
     with open(f"{a.out}.md", "w") as f:
         f.write("# Spot-coverage calibration readout\n\n"
                 "R_per of clean 1000-d light curves (faculae on, no noise). Main sequence, Teff < 6500 K.\n\n")
         f.write(md_table(pd.DataFrame(summ).fillna("")) + "\n\n")
-        f.write("R_per median vs Ro/Ro_sun, 0.9-1.1 M_sun (Masuda 2022: ~10 ppt plateau at 0.2-0.4, "
-                "steep decline above ~0.4)\n\n" + md_table(ro.fillna("-")) + "\n")
+        f.write("R_per median vs Ro/Ro_sun, 0.9-1.1 M_sun (Masuda 2022: ~10.8 ppt plateau at 0.2-0.5, "
+                "slope -4.6 above 0.5). Plateau and slope columns above: 4000-6250 K dwarfs.\n\n" + md_table(ro.fillna("-")) + "\n")
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     colors = ["k", "tab:blue", "tab:orange", "tab:red", "tab:green", "tab:purple"]
@@ -114,7 +121,9 @@ def main():
     ax1.set_ylabel("stars")
     ax1.legend(frameon=False, fontsize=13)
     ax2.axhspan(7, 13, xmin=0, xmax=1, color="0.9", zorder=0)
-    ax2.axvspan(0.2, 0.4, color="0.8", alpha=0.5, zorder=0)
+    ax2.axvspan(0.2, 0.5, color="0.8", alpha=0.5, zorder=0)
+    xs = np.array([0.5, 0.8])
+    ax2.plot(xs, MASUDA[0] * (xs / 0.5) ** MASUDA[1], color="0.3", ls="--", lw=2.5)
     ax2.set_xscale("log"); ax2.set_yscale("log")
     ax2.set_xlabel(r"Ro / Ro$_\odot$")
     ax2.set_ylabel(r"R$_{\rm per}$ [ppt]  (0.9-1.1 M$_\odot$)")

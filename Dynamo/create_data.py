@@ -100,20 +100,48 @@ def latitude_population(teff, prot, butterfly, pop, rng):
     return rossby, mu, width, drift
 
 # Time-mean spot coverage (fraction of the whole surface) vs Rossby number; sets the
-# number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star:
-#   f_i = f_sun * max(Ro_i/Ro_sun, ro_sat)^-slope * 10^N(0, scatter_dex), clipped to f_max
-# with Ro in units of the solar value (Cranmer & Saar 2011 tau_c here).
-# Shape: Cao & Pinsonneault 2022 (MNRAS 517, 2165), Pleiades APOGEE fit eq. 5,
-#   f = 0.0634 Ro^-0.881 above log Ro = -0.729, 0.278 below; their log Ro_sun = 0.39,
-#   so the knee is at Ro/Ro_sun = 10^(-0.729-0.39) = 0.076; scatter 0.059/0.278 = 21% -> 0.09 dex
-#   (saturated stars). Their fit is constrained only for Ro/Ro_sun < ~0.2.
-# Level: f_sun = 0.005, calibrated on 1000-d light curves against the Kepler amplitude
-#   distribution of McQuillan et al. 2014 (docs/spot_coverage.md, 'Calibration'). It lies
-#   between the resolved sunspot coverage at solar maximum (0.28%, Shapiro et al. 2014,
-#   doi:10.1051/0004-6361/201323086) and the spectroscopic level of the same fit at Ro_sun (0.029).
+# number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star
+# f_i = law(Ro_i/Ro_sun) * 10^N(0, scatter_dex), clipped to f_max, with Ro in units of the
+# solar value (Cranmer & Saar 2011 tau_c, as in Masuda 2022). docs/spot_coverage.md.
+# model "broken" (default), x = Ro/Ro_sun:
+#   x < ro_flat:             f_break * (max(x, ro_sat)/ro_flat)^-slope
+#   ro_flat <= x <= ro_break: f_break
+#   ro_break < x <= ro_tail:  f_break * (x/ro_break)^-slope_unsat
+#   x > ro_tail:              continues with slope_tail
+#   - slope 0.881 and ro_sat 0.076: Cao & Pinsonneault 2022 (MNRAS 517, 2165) eq. 5,
+#     f = 0.0634 Ro^-0.881 above log Ro = -0.729 with their log Ro_sun = 0.39; their
+#     Pleiades fit reaches only x ~ 0.2 (ro_flat). Scatter 21% at saturation -> 0.09 dex.
+#   - flat for 0.2 < x < 0.5, then d ln R_per / d ln Ro = -4.6 +- 0.9 above Ro = 0.99
+#     (x = 0.50): Masuda 2022 (arXiv:2206.01595), Kepler stars with Kp < 12 (least
+#     detection bias); beta_sat = -0.04 +- 0.09. In our light curves R_per ~ f^0.58 per
+#     star, so slope_unsat = 4.6/0.58 = 7.93.
+#   - slope_tail = 0.881 beyond x = 0.8, where Masuda's steep range ends; the less biased
+#     Santos et al. sample flattens again at x >~ 1 (Masuda 2022, Sec. 3.4). Extending the
+#     steep slope to x = 1 would give the Sun 0.008% coverage and leave 6% of stars spotless.
+#   - f_break = 0.02: calibrated so that R_per of 4000-6250 K dwarfs plateaus at ~10.8 ppt
+#     (Masuda) and the median/95% match McQuillan et al. 2014 (5.6/22.7 ppt).
+# model "rossby": single law f_sun * max(x, ro_sat)^-slope (first calibration, f_sun 0.005).
 # model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500]).
-SPOT_COVERAGE_DEFAULT = dict(model="rossby", f_sun=0.005, slope=0.881, ro_sat=0.076,
+SPOT_COVERAGE_DEFAULT = dict(model="broken", f_break=0.02, ro_flat=0.2, ro_break=0.5,
+                             slope_unsat=7.93, ro_tail=0.8, slope_tail=0.881,
+                             f_sun=0.005, slope=0.881, ro_sat=0.076,
                              scatter_dex=0.09, f_max=0.5)
+
+
+def spot_coverage_law(x, cfg):
+    """Median spot coverage (fraction of the surface) at Ro/Ro_sun = x, before scatter."""
+    x = np.asarray(x, dtype=float)
+    if cfg["model"] == "rossby":
+        return cfg["f_sun"] * np.maximum(x, cfg["ro_sat"]) ** (-cfg["slope"])
+    if cfg["model"] != "broken":
+        raise ValueError(f"unknown spot coverage model {cfg['model']!r}")
+    fb, xb, xt = cfg["f_break"], cfg["ro_break"], cfg["ro_tail"]
+    f_tail = fb * (xt / xb) ** (-cfg["slope_unsat"])
+    return np.where(x < cfg["ro_flat"],
+                    fb * (np.maximum(x, cfg["ro_sat"]) / cfg["ro_flat"]) ** (-cfg["slope"]),
+           np.where(x <= xb, fb,
+           np.where(x <= xt, fb * (x / xb) ** (-cfg["slope_unsat"]),
+                    f_tail * (x / xt) ** (-cfg["slope_tail"]))))
 
 
 def spot_coverage_population(rossby, has_dynamo, cfg, rng):
@@ -121,8 +149,8 @@ def spot_coverage_population(rossby, has_dynamo, cfg, rng):
     n = len(rossby)
     if cfg["model"] == "legacy":
         return np.full(n, np.nan)
-    x = np.maximum(np.asarray(rossby, dtype=float) / ROSSBY_SUN, cfg["ro_sat"])
-    f = cfg["f_sun"] * x ** (-cfg["slope"]) * 10 ** rng.normal(0.0, cfg["scatter_dex"], n)
+    x = np.asarray(rossby, dtype=float) / ROSSBY_SUN
+    f = spot_coverage_law(x, cfg) * 10 ** rng.normal(0.0, cfg["scatter_dex"], n)
     return np.where(has_dynamo, np.minimum(f, cfg["f_max"]), 0.0)
 
 
