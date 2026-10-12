@@ -13,6 +13,8 @@ For each arm (dataset_cov_legacy, dataset_cov_fXXXX):
   -> .md (tables), .csv (per star), .png (figure)
 """
 import argparse
+import glob
+import json
 import sys
 from pathlib import Path
 
@@ -25,7 +27,7 @@ from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from faculae_smoke_report import load, norm, r_per, md_table  # noqa: E402
+from faculae_smoke_report import norm, r_per, md_table  # noqa: E402
 from Dynamo.create_data import ROSSBY_SUN  # noqa: E402
 
 MCQ = (0.95, 5.6, 22.7)          # ppt, 5th / 50th / 95th percentile
@@ -43,11 +45,18 @@ def bimodality(x):
     return (g ** 2 + 1) / (k + 3 * (n - 1) ** 2 / ((n - 2) * (n - 3)))
 
 
+def iter_stars(d):
+    """(sim_id, light curve, configs) one chunk at a time (a 10k-star set is ~11 GB in memory)."""
+    for f in sorted(glob.glob(f"{d}/lc/Kepler/chunk_*.pqt")):
+        cfg = {int(k): v for k, v in json.load(open(f"{d}/configs/{Path(f).stem}.json")).items()}
+        for sid, g in pd.read_parquet(f).groupby("sim_id"):
+            yield sid, g, cfg
+
+
 def arm_table(d):
-    lc, cfg = load(d)
     sims = pd.read_csv(f"{d}/simulation_properties.csv").set_index("Simulation Number")
     rows = []
-    for sid, g in lc.groupby("sim_id"):
+    for sid, g, cfg in iter_stars(d):
         g = g.sort_values("time")
         sp, ap = cfg[sid]["stellar_params"], cfg[sid]["activity_params"]
         r = sims.loc[sid]
