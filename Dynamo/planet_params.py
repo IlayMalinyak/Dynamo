@@ -110,6 +110,7 @@ def generate_planet_parameters(stellar_mass, stellar_radius, planet_prob=0.1,
 
 
 # Innermost allowed orbit (stellar radii); the closest hot Jupiters sit at a/R* ~ 3.
+# [own assumption] the cut value 3 (round number from the known closest hot Jupiters).
 A_MIN_RSTAR = 3.0
 
 
@@ -168,6 +169,8 @@ def _generate_single_planet(M_star_kg, R_star_m, stellar_mass_msun,
     i_orb = orbit_inclination(impact, a_Rstar, ecc, esinw)
 
     # RV semi-amplitude K (uses the orbital inclination of the transiting orbit)
+    # [paper] standard Keplerian semi-amplitude in m/s (e.g. Cumming et al. 1999); this form
+    # omits the (1 - e^2)^-1/2 factor (inherited from the original code).
     K = 203.25 * (mass * np.sin(i_orb) / mj) * \
         (stellar_mass_msun + mass * M_earth / M_sun) ** (-2/3) * period ** (-1/3)
 
@@ -196,6 +199,7 @@ def orbit_inclination(impact, a_rstar, ecc=0.0, esinw=0.0):
 
     Inverts the impact-parameter relation used by the transit geometry:
     cos i = (b / a) * (1 + e sin w) / (1 - e^2).
+    [paper] b = (a cos i / R*) (1 - e^2) / (1 + e sin w), Winn 2010 (arXiv:1001.2010), eq. 7.
     """
     cosi = (impact / a_rstar) * (1 + esinw) / (1 - ecc ** 2)
     return float(np.arccos(np.clip(cosi, -1.0, 1.0)))
@@ -203,6 +207,11 @@ def orbit_inclination(impact, a_rstar, ecc=0.0, esinw=0.0):
 
 # Kraft break and obliquity distribution (Winn et al. 2010; Albrecht et al. 2012, 2022):
 # cool hosts are mostly aligned, hot hosts have a broad obliquity distribution.
+# [paper] the Kraft break at 6250 K and the cool-aligned / hot-misaligned trend.
+# [own assumption] the numbers: aligned spread 10 deg, misaligned fractions 0.1 (cool)
+# and 0.5 (hot), and the functional forms (isotropic misaligned, |gaussian| aligned,
+# a step at the Kraft break). They are rounded values qualitatively matching the papers,
+# not fitted.
 KRAFT_BREAK_TEFF = 6250.0
 ALIGNED_SIGMA_DEG = 10.0
 MISALIGNED_FRAC_COOL = 0.1
@@ -236,6 +245,7 @@ def assign_spin_orbit_geometry(teff, planets, rng=np.random):
     cos psi = cos i_star cos i_orb + sin i_star sin i_orb cos lambda holds exactly.
     All planets are taken to share the first planet's sky-projected orbit normal
     (near-coplanar), each with its own orbital inclination.
+    [own assumption] uniform spin azimuth around the orbit normal; coplanar systems.
 
     Updates each planet dict in place ('spin_orbit_angle' = lambda,
     'obliquity' = psi, 'orbit_inclination') and returns i_star in radians.

@@ -287,6 +287,9 @@ def exact_spot_coverage(N, Ngrid_in_ring, vis_spots_idx, spot_pos, vec_spot):
     Returns (asp, afc) arrays over all cells: asp = sum over visible spots of
     area(spot cap & cell) / area(cell); afc = the same for the facular annulus
     (cap of the facula radius minus the spot cap of the same feature).
+    [own assumption] overlaps between DIFFERENT features are not resolved here; sums
+    are capped later by adjust_area_fractions. [numerical] exact cap areas use
+    8-point Gauss-Legendre quadrature.
     """
     width = np.pi / (2 * N - 1)
     ncell = 0

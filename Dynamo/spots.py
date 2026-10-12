@@ -80,7 +80,10 @@ def mean_spot_area_deg2(max_area, nbins=5, delta_lnA=0.5):
 
     Size bin k has bsize^2 = max_area / e^(k delta_lnA), drawn with p_k proportional
     to e^(k delta_lnA); the spot radius (Star.generate_spot_map) is
-    sqrt(bmax) = sqrt(2.5) bsize deg. Areas are exact spherical caps."""
+    sqrt(bmax) = sqrt(2.5) bsize deg. Areas are exact spherical caps.
+    [inherited] the 5 bins, delta_lnA = 0.5 and p_k come from the butterpy-style
+    emergence code this module was built on (Aigrain et al. 2015 / Claytor et al. 2022,
+    after Schrijver & Harvey 1994); not re-derived or re-checked here."""
     fact = np.exp(delta_lnA * np.arange(nbins))
     p = fact / fact.sum()
     r = np.deg2rad(np.sqrt(2.5 * np.asarray(max_area, dtype=float)[..., None] / fact))
@@ -88,7 +91,9 @@ def mean_spot_area_deg2(max_area, nbins=5, delta_lnA=0.5):
 
 
 def spot_area_lifetime_days(tau_emerge, tau_decay):
-    """Time integral of A(t)/A_max for the gaussian law (radius factor exp(-t^2/tau^2))."""
+    """Time integral of A(t)/A_max for the gaussian law (radius factor exp(-t^2/tau^2)).
+
+    Analytic: A ~ r^2, so A(t)/A_max = exp(-2 t^2/tau^2), integral sqrt(pi/8) tau per side."""
     return np.sqrt(np.pi / 8) * (tau_emerge + tau_decay)
 
 
@@ -101,7 +106,11 @@ def nspots_for_coverage(coverage, ndays, max_area, tau_emerge, tau_decay):
 
 def area_for_max_spots(coverage, ndays, max_area, tau_emerge, tau_decay, max_spots):
     """Smallest max_area (>= the given one) that reaches `coverage` with at most
-    `max_spots` spots. Returns (max_area, boost factor)."""
+    `max_spots` spots. Returns (max_area, boost factor).
+
+    [own assumption] above the cap the star gets fewer, bigger spots at the same
+    coverage (a large spot standing for an unresolved group); a run-time choice.
+    [numerical] 50 iterations, tolerance 1e-6."""
     m = float(max_area)
     for _ in range(50):
         n = nspots_for_coverage(coverage, ndays, m, tau_emerge, tau_decay)
@@ -270,6 +279,8 @@ class SpotsGenerator(object):
                 truncated to [0, 90] deg, hemisphere random, with
                 mu = lat_mean + lat_drift * (0.5 - cycle phase) if butterfly
                 (equatorward drift over the cycle) else lat_mean.
+                [own assumption] gaussian latitudes and a LINEAR drift in cycle
+                phase; the Sun's (Sporer) drift is not linear (Hathaway 2015).
             ... (other parameters same as before)
         """
         # Set attributes
@@ -395,6 +406,7 @@ class SpotsGenerator(object):
                 lat = -1.0
                 while not (0.0 <= lat <= 89.9):        # truncated normal by rejection
                     lat = np.random.normal(mu, lat_width)
+                # [own assumption] no hemispheric asymmetry (50/50)
                 k = np.random.choice([0, 1])
                 lon = np.random.uniform(0, 360)
 

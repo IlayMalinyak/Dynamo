@@ -86,8 +86,22 @@ with Rossby number (`create_data.SPOT_PROPS_DEFAULT`, `scale_spot_properties`):
 | >= 1 | 1 (solar) | x 0.33 (dT ~ 600 K) | x 0.098 (median 1.2 deg^2) | x 3.3 (median 10, cap 40) |
 
 with factor^w and w linear in log x between 0.2 and 1. The per-star scatter of each
-draw is kept. The endpoints are measured (above); the interpolation range is an
-assumption. Spot lifetimes are not scaled (`Decay Time` effect is small: 5.2 -> 4.3 ppt
+draw is kept.
+
+> **ASSUMPTION, NOT A MEASUREMENT.** Only the two endpoints are measured: the active
+> values (Berdyugina 2005 spot temperatures, the drawn spot sizes) and the solar values
+> (table above). **Where and how** spot temperature, spot size and Q change between them
+> is not measured and not taken from any paper:
+>
+> - **ro_active = 0.2 and ro_solar = 1.0 (Ro/Ro_sun) are our choice.** 0.2 reuses the edge
+>   of the Cao & Pinsonneault data; 1.0 is the Sun. No study we found measures spot
+>   temperature, spot size or Q against Ro over 0.2-1.
+> - **The shape (geometric, linear in log Ro) is our choice.**
+> - **All three properties are assumed to change over the same range.**
+>
+> The f_break calibration absorbs this choice: a different range would give a different
+> f_break. Sensitivity can be tested with
+> `--coverage_config '{"props_config": {"ro_active": ..., "ro_solar": ...}}'`. Spot lifetimes are not scaled (`Decay Time` effect is small: 5.2 -> 4.3 ppt
 for 6 -> 1.5 rotations). `--coverage_config '{"props": "fixed"}'` keeps the drawn values;
 model "legacy" also keeps them.
 

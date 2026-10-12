@@ -8,6 +8,7 @@ import astropy.units as u
 from tqdm import tqdm
 
 # spots (and faculae) with a smaller angular radius [rad] are skipped: area ~1e-8 of the disk
+# [numerical] our cutoff; flux change <= 0.03 ppm on a 24 ppt light curve (docs/spot_coverage.md)
 MIN_SPOT_RAD = 1e-4
 
 D2S = 1*u.day.to(u.s)
@@ -352,12 +353,15 @@ class Rotator():
         Q = self.star.facular_area_ratio
         if self.star.spots_evo_law == 'gaussian' and Q != 0.0:
             # Faculae decay on their own (longer) time scale, so they outlive the spot.
+            # [own assumption] functional form: gaussian in time like the spots, with its own
+            # decay time tau_fac and the spot's emergence time, applied to the undecayed
+            # radius R0 sqrt(1 + q). No published facular-decay law is used.
             ncol = spot_map.shape[1]
             q_i = spot_map[:, 14] if ncol > 14 else np.zeros(num_spots)
             q_i = np.where(q_i > 0, q_i, Q)
             tau_fac = spot_map[:, 15] if ncol > 15 else np.zeros(num_spots)
             tau_fac = np.where(tau_fac > 0, tau_fac,
-                               self.star.tau_decay * getattr(self.star, 'facula_lifetime_ratio', 1.0))
+                               self.star.tau_decay * getattr(self.star, 'facula_lifetime_ratio', 3.0))
             tt = t - tini
             ffac = np.where(tt < 0, np.exp(-tt ** 2 / self.star.tau_emerge ** 2),
                             np.exp(-tt ** 2 / tau_fac ** 2))

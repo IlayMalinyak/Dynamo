@@ -107,6 +107,7 @@ class Star:
         self.wavelength_upper_limit = self._get_config_value('general', 'wavelength_upper_limit', float)
         self.n_grid_rings = self._get_config_value('general', 'n_grid_rings', int)
         # spot-count limit for coverage-driven spot maps (bigger spots above it)
+        # [own assumption] run-time cap, 10^4 spots per run (docs/spot_coverage.md)
         self.max_spots = self._get_optional('general', 'max_spots', int, 10000)
         # exact spot/facula area per grid cell (nbspectra.exact_spot_coverage); False
         # restores the original approximation, which ripples at P_rot / cells-per-ring
@@ -222,6 +223,8 @@ class Star:
             setattr(self, param, self._get_config_value('star', param, type_conv))
         # Faculae: star-level multiplier of the solar centre-to-limb contrast law,
         # and facular decay time in units of the spot decay time.
+        # [own assumption] defaults 1.0 (solar law unscaled) and 3.0 (faculae outlive spots;
+        # the factor 3 is our choice, not from a paper).
         self.facula_contrast_scale = self._get_optional('star', 'facula_contrast_scale', float, 1.0)
         self.facula_lifetime_ratio = self._get_optional('star', 'facula_lifetime_ratio', float, 3.0)
         if self.facular_area_ratio is None:
@@ -326,6 +329,7 @@ class Star:
         dT = float(spot_contrast_berdyugina(params_dict['Teff']))
         dT *= float(params_dict.get('Spot Contrast Scale', 1.0))
         dT = min(dT, float(params_dict['Teff']) - T_PHOENIX_MIN)
+        # [own assumption] +-10% band around dT
         self.spot_T_contrast_min = 0.9 * dT
         self.spot_T_contrast_max = 1.1 * dT
         self.spot_T_contrast = dT
@@ -459,14 +463,19 @@ class Star:
         self.nspots_expected = np.nan
         coverage = getattr(self, 'spot_coverage', None)
         if coverage is not None and getattr(self, 'has_dynamo', True):
+            # [inherited] spot emergence/decay times, same law as the original code
+            # (tau_emerge = min(2, P decay/10), tau_decay = max(P decay, 50) days).
             tau_e = min(2, self.rotation_period * self.spots_decay_time / 10)
             tau_d = max(self.rotation_period * self.spots_decay_time, 50)
             tau_f = tau_d * self.facula_lifetime_ratio if self.facular_area_ratio > 0 else 0.0
+            # [own assumption] burn-in of 2 x the longest decay time (radius factor
+            # exp(-4) ~ 0.02 by then)
             burn = int(np.ceil(2 * max(tau_d, tau_f)))
             scaled_max_area, self.spot_area_boost = spots.area_for_max_spots(
                 coverage, ndays, scaled_max_area, tau_e, tau_d, self.max_spots)
             self.nspots_expected = float(spots.nspots_for_coverage(coverage, ndays + burn, scaled_max_area,
                                                                     tau_e, tau_d))
+            # [own assumption] spot count Poisson around the expected number
             rng_n = np.random.default_rng([0 if self.seed is None else self.seed, 59])
             nspots = int(rng_n.poisson(self.nspots_expected))
         self.spot_max_area_used = float(scaled_max_area)
@@ -509,7 +518,8 @@ class Star:
         spots_config[:, 3] = np.rad2deg((regions['phpos'] + regions['phneg']) / 2)
         spots_config[:, 4] = np.sqrt(regions['bmax']) # bmax is proportional to area (radius ** 2)
         # Faculae: per-spot area ratio (lognormal scatter around Q) and facular
-        # decay time (spot decay time x facula_lifetime_ratio). Columns 4-13 are
+        # decay time (spot decay time x facula_lifetime_ratio).
+        # [own assumption] per-spot scatter of Q, 0.3 in ln. Columns 4-13 are
         # reserved for the radius-evolution coefficients of the other laws.
         if self.facular_area_ratio > 0 and len(spots_config) > 0:
             spots_config[:, FACULA_Q_COL] = self.facular_area_ratio * np.random.lognormal(0.0, 0.3, len(spots_config))
@@ -643,7 +653,8 @@ class Star:
         )
         # Faculae: intensity of a model DT_FAC_REF hotter than the photosphere;
         # facular intensity at each mu is a blend weighted by the solar
-        # centre-to-limb contrast law (Meunier et al. 2010).
+        # centre-to-limb contrast law ([paper] Meunier et al. 2010).
+        # [own assumption] the linear blend itself (contrasts.DT_FAC_REF).
         use_faculae = self.facular_area_ratio > 0 and len(self.spot_map) > 0
         if use_faculae:
             _, _, hot_flux = spectra.interpolate_Phoenix_mu_lc_with_metallicity(

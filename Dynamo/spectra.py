@@ -588,6 +588,8 @@ def create_observed_spectra(star, wv_array, photo_flux, spot_flux, mu, ff_sp,
     Faculae (optional): `ff_fc` facular filling factor (percent) radiating the
     disk-averaged facular spectrum built from `hot_flux` with the solar
     centre-to-limb weights. Ignored when `hot_flux` is None.
+    [own assumption] the facular area is placed at no particular position: the mean
+    filling factor radiates the disk-averaged facular intensity.
 
     Parameters:
     -----------

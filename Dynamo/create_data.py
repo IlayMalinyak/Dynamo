@@ -28,12 +28,17 @@ M_R_THRESH = 1
 MAX_T = 10200
 MIN_T = 2500
 # Range of the per-star maximum spot area (deg^2), sampled log-uniformly.
+# [own assumption] range and log-uniform form are our choice (active-star end; solar-like
+# stars are scaled down by SPOT_PROPS_DEFAULT).
 SPOT_AREA_MIN = 3.0
 SPOT_AREA_MAX = 50.0
 # Evolved stars. Subgiants (not main sequence, logg >= GIANT_LOGG) keep a dynamo with
 # the age-activity level; of the giants only a fraction is active (spun-up stars,
 # ~2% of Kepler red giants show rotational modulation, Ceillier et al. 2017), with
 # activity drawn log-uniform in ACTIVE_GIANT_AR (MS median ~7).
+# [own assumption] GIANT_LOGG 3.5 cut; P_ACTIVE_GIANT 0.03 rounded up from the ~2% of
+# Ceillier et al. 2017 ([paper]); active-giant activity range 1-30; DYNAMO_TEFF_MAX
+# 7000 K (no spots on stars without a convective envelope); subgiants always spotted.
 GIANT_LOGG = 3.5
 P_ACTIVE_GIANT = 0.03
 ACTIVE_GIANT_AR = (1.0, 30.0)
@@ -50,6 +55,10 @@ DYNAMO_TEFF_MAX = 7000.0
 # exists; defaults are Sun-like (centroid ~30 -> 8 deg, Hathaway 2015) with broad
 # star-to-star scatter. Rapid rotators are expected to have higher-latitude spots
 # (Schuessler & Solanki 1992; Isik et al. 2018): rossby_slope < 0.
+# [paper] the Sun-like centroid range (Hathaway 2015) and the sign of the Ro trend.
+# [own assumption] every number here (mean 20, scatter 10, max 75, width 3-12 log-uniform,
+# drift 20, rossby_slope 0) and the functional form (mean linear in log Ro, gaussian
+# scatter, linear drift); no population measurement exists.
 LATITUDE_POP_DEFAULT = dict(model="gaussian", mean=20.0, mean_scatter=10.0, mean_max=75.0,
                             width_min=3.0, width_max=12.0, drift=20.0, rossby_slope=0.0)
 ROSSBY_SUN = None  # set below from the same tau_c law
@@ -61,6 +70,7 @@ def convective_turnover_days(teff):
     return 314.24 * np.exp(-(teff / 1952.5) - (teff / 6250.0) ** 18) + 0.002
 
 
+# [paper] Sun: 25.4 d sidereal equatorial rotation, Teff 5772 K (IAU 2015 B3, Prsa et al. 2016)
 ROSSBY_SUN = 25.4 / convective_turnover_days(5772.0)
 
 
@@ -101,27 +111,41 @@ def latitude_population(teff, prot, butterfly, pop, rng):
 
 # Time-mean spot coverage (fraction of the whole surface) vs Rossby number; sets the
 # number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star
-# f_i = law(Ro_i/Ro_sun) * 10^N(0, scatter_dex), clipped to f_max, with Ro in units of the
-# solar value (Cranmer & Saar 2011 tau_c, as in Masuda 2022). docs/spot_coverage.md,
-# docs/sun_calibration.md.
+# f_i = law(Ro_i/Ro_sun) * 10^N(0, scatter_dex), clipped to f_max.
+# docs/spot_coverage.md, docs/sun_calibration.md, docs/ASSUMPTIONS.md.
+# Tags: [paper] value or form from a paper; [own assumption] our choice, not measured;
+#       [own calibration] fitted by us with our simulator against published data.
 # model "broken" (default), x = Ro/Ro_sun:
 #   x < ro_flat:              f_break * (max(x, ro_sat)/ro_flat)^-slope
 #   ro_flat <= x <= ro_break:  f_break
 #   ro_break < x <= ro_tail:   power law from f_break to f_tail (slope_unsat, if f_tail is None)
 #   x > ro_tail:               continues with slope_tail
-#   - slope 0.881 and ro_sat 0.076: Cao & Pinsonneault 2022 (MNRAS 517, 2165) eq. 5,
-#     f = 0.0634 Ro^-0.881 above log Ro = -0.729 with their log Ro_sun = 0.39; their
-#     Pleiades fit reaches only x ~ 0.2 (ro_flat). Scatter 21% at saturation -> 0.09 dex.
-#   - flat for 0.2 < x < 0.5, steep above: Masuda 2022 (arXiv:2206.01595), R_per of Kepler
-#     dwarfs plateaus at ~10.8 ppt and falls with d ln R / d ln Ro = -4.6 +- 0.9 above
-#     Ro = 0.99 (x = 0.50, Kp < 12 stars).
-#   - f_tail = 0.1% at ro_tail = 1 (Sun anchor): with solar spot properties the simulator
-#     gives the Sun's median R_per (0.63 vs 0.65-0.7 ppt, Basri 2013, Reinhold 2020) at
-#     0.1% coverage (docs/sun_calibration.md). slope_tail = 0.881 beyond.
-#   - f_break = 0.06: PROVISIONAL, middle of the calibration arms 0.03 / 0.06 / 0.12 (Masuda
-#     plateau, McQuillan 2014 percentiles); set from their readout.
+#   x = Ro/Ro_sun with Cranmer & Saar 2011 tau_c [paper; Masuda 2022 uses the same scale].
+#     [own assumption] only the ratio Ro/Ro_sun is carried between papers' tau_c conventions.
+#   slope 0.881, ro_sat 0.076 [paper] Cao & Pinsonneault 2022 (MNRAS 517, 2165) eq. 5,
+#     f = 0.0634 Ro^-0.881 above log Ro = -0.729, their log Ro_sun = 0.39.
+#   ro_flat 0.2 [own assumption] junction placed at the edge of Cao & P.'s Pleiades data
+#     (x ~ 0.2); no paper places it there.
+#   flat for 0.2 < x < 0.5 [paper] Masuda 2022 (arXiv:2206.01595): R_per plateau, slope
+#     -0.04 +- 0.09. [own calibration] that flat R_per means flat coverage uses our
+#     simulator's R_per ~ f^0.58 per star.
+#   ro_break 0.5 [paper] Masuda 2022, Kp < 12 fit, Ro_break = 0.99 = 0.50 Ro_sun.
+#   power-law shape from f_break to f_tail [own assumption]; Masuda gives the R_per slope
+#     (-4.6 +- 0.9) only over 0.4-0.8 Ro_sun.
+#   f_tail 0.1% at ro_tail 1 [own calibration] Sun anchor: solar-property spots give the
+#     Sun's median R_per (0.65-0.7 ppt [paper] Basri et al. 2013, Reinhold et al. 2020) at
+#     0.1% in our simulator (docs/sun_calibration.md).
+#   slope_tail 0.881 beyond x = 1 [own assumption] Cao & P.'s slope reused where no
+#     coverage data exist; Masuda 2022 Sec. 3.4 only notes a flattening at x >~ 1.
+#   scatter_dex 0.09 [paper] Cao & P. 2022, 21% at saturation. [own assumption] the same
+#     scatter at all Ro.
+#   f_max 0.5 [paper] TiO saturation 40-50%, Fang et al. 2016 (MNRAS 463, 2494).
+#   f_break 0.06 [own calibration] PROVISIONAL, middle of the arms 0.03 / 0.06 / 0.12
+#     (targets: Masuda plateau 10.8 ppt, McQuillan et al. 2014 percentiles).
+#   [own assumption] the same law for dwarfs, subgiants and active giants.
 # Spot properties scale with activity (props "activity"; SPOT_PROPS_DEFAULT below).
-# model "rossby": single law f_sun * max(x, ro_sat)^-slope (first calibration, f_sun 0.005).
+# model "rossby": single law f_sun * max(x, ro_sat)^-slope; f_sun 0.005 [own calibration]
+#   against McQuillan et al. 2014 (first calibration).
 # model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500])
 # and the old spot properties.
 SPOT_COVERAGE_DEFAULT = dict(model="broken", f_break=0.06, ro_flat=0.2, ro_break=0.5,
@@ -134,11 +158,28 @@ SPOT_COVERAGE_DEFAULT = dict(model="broken", f_break=0.06, ro_flat=0.2, ro_break
 # Berdyugina 2005 dT, 3-50 deg^2 log-uniform, Q median 3) for x <= ro_active, fully solar
 # for x >= ro_solar, geometric interpolation in log x between. The per-star scatter of
 # each draw is kept. Solar values (docs/sun_calibration.md):
-#   contrast  dT ~ 600 K = 0.33 x Berdyugina(5772 K) (Meunier et al. 2010, 663 K, 450-670 K)
-#   max area  1.2 deg^2 median (Baumann & Solanki 2005 group areas, area-weighted 207 MSH),
-#             i.e. the active draw times 1.2 / 12.2 (12.2 = median of the 3-50 draw)
-#   Q         10 median (plage ~ 10x spot area, Meunier et al. 2010; network excluded)
-# The interpolation range is an assumption, not a measurement.
+#   contrast  dT ~ 600 K = 0.33 x Berdyugina(5772 K). [paper] Meunier et al. 2010
+#             (arXiv:1001.1638) fit 663 K (450-670 K); Lagrange et al. 2010 use 550 K.
+#             [own assumption] 600 K picked inside that range.
+#   max area  1.2 deg^2 median. [paper] Baumann & Solanki 2005 (astro-ph/0510516) group
+#             areas, lognormal <A> = 62.2 MSH, sigma_A = 2.45. [own assumption] <A> read as
+#             the lognormal median, and the match made on the area-weighted mean (207 MSH),
+#             i.e. the active draw times 1.2 / 12.2 (12.2 = median of the 3-50 draw).
+#   Q         10 median. [paper] plage ~ 10x spot area, Meunier et al. 2010.
+#             [own assumption] network faculae left out of Q (they are spread over the
+#             disc, not around spots); q_max = 40 cap.
+#
+# !!! ASSUMPTION, NOT A MEASUREMENT !!!
+# Only the two endpoints are measured: the active values (Berdyugina 2005; drawn spot
+# sizes) and the solar values (above). WHERE and HOW the properties change between them
+# is NOT measured and NOT taken from any paper:
+#   - ro_active = 0.2 and ro_solar = 1.0 (Ro/Ro_sun) were chosen by us. 0.2 reuses the
+#     edge of the Cao & Pinsonneault data (ro_flat); 1.0 is the Sun. No study measures
+#     spot temperature, spot size or Q as a function of Ro over 0.2-1.
+#   - the transition shape (geometric, linear in log Ro) was chosen by us.
+#   - all three properties are assumed to change over the same range.
+# Change ro_active / ro_solar through coverage_config {"props_config": {...}} to test
+# the sensitivity. See docs/sun_calibration.md, "ASSUMPTION".
 SPOT_PROPS_DEFAULT = dict(ro_active=0.2, ro_solar=1.0, contrast_ratio=0.33,
                           area_ratio=1.2 / 12.2, q_ratio=10.0 / 3.0, q_max=40.0)
 
@@ -150,7 +191,12 @@ def solar_weight(x, ro_active, ro_solar):
 
 
 def scale_spot_properties(x, contrast_scale, max_area, facula_q, props=None):
-    """Move per-star spot properties from the active draws toward solar values with Ro."""
+    """Move per-star spot properties from the active draws toward solar values with Ro.
+
+    ASSUMPTION, NOT A MEASUREMENT: the endpoints are measured, but the transition range
+    (ro_active = 0.2 to ro_solar = 1.0 in Ro/Ro_sun) and its log-linear shape are our
+    choice; see the comment above SPOT_PROPS_DEFAULT.
+    """
     p = dict(SPOT_PROPS_DEFAULT, **(props or {}))
     w = solar_weight(x, p["ro_active"], p["ro_solar"])
     return (contrast_scale * p["contrast_ratio"] ** w,
@@ -318,10 +364,12 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     incl = np.arccos(np.random.uniform(0, 1, Nlc))
     # gives roughly the fraction with cycle < 4 years to be the same as detected by Reinhold;
     # truncated so that cycle length stays positive
+    # [inherited] cycle-length prior of the original code ("Reinhold": Reinhold et al. 2017,
+    # citation not verified here); the 2-25 yr bounds and the overlap range are our choice.
     clen = truncated_normal_dist(10, 2.8, 2, 25, Nlc)
     cover = 10 ** np.random.uniform(low=-1, high=np.log10(3), size=Nlc)
     # tau_evol = np.random.uniform(low=1, high=20, size=Nlc)
-    # spots lifetime in units of period. The choice of this distribution is arbitrary;
+    # [own assumption] spots lifetime in units of period. The choice of this distribution is arbitrary;
     # truncated so that lifetimes stay positive and longer than ~1.5 rotations
     tau_evol = truncated_normal_dist(6, 2, 1.5, 15, Nlc)
     # mask = tau_evol < 2
@@ -387,17 +435,25 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
 
     # Per-star spot temperature-contrast scale (multiplies the Berdyugina 2005
     # Teff relation) and maximum spot area in deg^2.
+    # [own assumption] 20% star-to-star scatter, bounds 0.5-1.5
     spot_contrast_scale = truncated_normal_dist(1.0, 0.2, 0.5, 1.5, Nlc)
     spot_max_area = 10 ** np.random.uniform(np.log10(SPOT_AREA_MIN), np.log10(SPOT_AREA_MAX), Nlc)
 
     # Faculae. Q = facular/spot area ratio, solar ~3 (Chapman et al. 1997).
     # Optionally Q falls with activity (Shapiro et al. 2014): Q * ar^-0.3.
+    # [paper, not verified] Chapman 1997 is not on arXiv; we could not check Q ~ 3. Shapiro
+    # 2014 gives facular/spot disc coverage ~11 at solar maximum (incl. network);
+    # Meunier 2010 plage ~10x spots (docs/sun_calibration.md).
+    # [own assumption] 0.4 dex scatter, 0.3-20 bounds, and the -0.3 exponent (Shapiro 2014
+    # gives the trend only).
     facula_q = 10 ** truncated_normal_dist(np.log10(3.0), 0.4, np.log10(0.3), np.log10(20.0), Nlc)
     if q_activity_dep:
         facula_q = np.clip(facula_q * np.clip(ar, 1e-3, None) ** (-0.3), 0.3, 20.0)
     # multiplier of the solar facular centre-to-limb contrast law
+    # [own assumption] spread 0.3, bounds 0.3-2 (unknown Teff dependence)
     facula_contrast_scale = truncated_normal_dist(1.0, 0.3, 0.3, 2.0, Nlc)
     # facular decay time in units of the spot decay time
+    # [own assumption] log-uniform 1.5-5 (faculae outlive spots; values not from a paper)
     facula_lifetime_ratio = 10 ** np.random.uniform(np.log10(1.5), np.log10(5.0), Nlc)
     L = np.clip(interp['L'], a_min=None, a_max=1000)
     R = interp['R']
@@ -536,6 +592,7 @@ def check_simdata(sims):
     assert (sims['Spot Max'] > sims['Spot Min']).all(), "Spot Max <= Spot Min"
     assert (sims['Period'] > 0).all(), "non-positive rotation period"
     assert (sims['Spot Max Area'] > 0).all(), "non-positive spot area"
+    # upper bound q_max (40), above the 20 of the Q draw: the activity scaling raises Q
     assert sims['Facula Q'].between(0.3, SPOT_PROPS_DEFAULT["q_max"]).all(), "Facula Q out of range"
     assert sims['Facula Contrast Scale'].between(0.3, 2.0).all(), "facular contrast scale out of range"
     assert sims['Facula Lifetime Ratio'].between(1.5, 5.0).all(), "facular lifetime ratio out of range"

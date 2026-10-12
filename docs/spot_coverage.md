@@ -181,7 +181,8 @@ spots or too little facular cancellation), which this calibration absorbs into f
 
 **Superseded by the Sun calibration** (docs/sun_calibration.md): the population's spots at
 Ro_sun were ~3x darker and ~10x larger than the Sun's. Spot properties now scale with
-activity, the law is anchored at f(Ro_sun) = 0.1%, and f_break is being recalibrated. The
+activity (**the 0.2-1 Ro/Ro_sun transition range is an assumption, not a measurement**;
+see docs/sun_calibration.md), the law is anchored at f(Ro_sun) = 0.1%, and f_break is being recalibrated. The
 `dataset_cov_broken` confirmation run was not made.
 
 Caveats: no photometric noise, no period-detection selection, 150 stars per arm.

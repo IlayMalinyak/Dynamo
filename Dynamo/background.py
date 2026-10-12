@@ -35,11 +35,17 @@ numax / Dnu scaling: numax = 3090 (g/g_sun)(Teff/Tsun)^-0.5, Dnu = 135.1 (M/R^3)
 """
 import numpy as np
 
+# Tags: [paper] from a paper; [own assumption] our choice; [numerical] numerical setting.
+# [paper] solar reference values of the scaling relations, Huber et al. 2011 (ApJ 743,
+# 143): Teff 5777 K (kept at 5777 to match that calibration; create_data uses the IAU
+# 5772 K), numax 3090 muHz, Dnu 135.1 muHz, A_max 2.5 ppm. log g 4.438: IAU 2015 B3.
 TEFF_SUN = 5777.0
 LOGG_SUN = 4.438
 NUMAX_SUN = 3090.0      # muHz
 DNU_SUN = 135.1         # muHz
 AMAX_SUN = 2.5          # ppm, radial-mode amplitude in the Kepler band
+# [own assumption] no granulation/oscillation background for stars without a convective
+# envelope: a logistic taper at 7000 K, width 150 K (both values our choice).
 GRAN_TEFF_CUT = 7000.0  # convective background tapered off above this ...
 GRAN_TEFF_WIDTH = 150.0  # ... with this logistic width [K]
 VISIBILITY = {0: 1.0, 1: 1.54, 2: 0.58}   # Kepler-band mode visibilities (Mosser 2012)
@@ -48,8 +54,12 @@ VISIBILITY = {0: 1.0, 1: 1.54, 2: 0.58}   # Kepler-band mode visibilities (Mosse
 # noise [e-] per cadence (scaled as sqrt(cadence)); floor_ppm: systematic floor per
 # cadence point. Kepler: 4.5e9 e- in 6.5 h at Kp = 12 (Jenkins et al. 2010);
 # TESS: 1.5e4 e-/s at T = 10 (Vanderspek et al. 2018), 80% duty cycle.
+# [own assumption] read_e and floor_ppm (Kepler 6000 e-, 10 ppm; TESS 4000 e-, 85 ppm) are
+# our settings for a plausible noise-vs-magnitude curve, not fitted to a published CDPP
+# relation.
 # mag_range: survey-like target magnitudes, p(m) ~ 10^(0.3 m) inside the range
 # (number counts rise towards the faint limit; Kepler targets mostly Kp < 16).
+# [own assumption] the 0.3 slope and the ranges (Kp 9-16, T 7-13) are approximate.
 INSTRUMENTS = {
     "Kepler": dict(mag_ref=12.0, n_e=3.46e8, cadence_s=1765.5, read_e=6.0e3, floor_ppm=10.0,
                    mag_range=(9.0, 16.0)),
@@ -60,10 +70,12 @@ INSTRUMENTS = {
 
 # --------------------------------------------------------------------------- scalings
 def numax_scaling(teff, logg):
+    # [paper] numax ~ g Teff^-0.5 (Brown et al. 1991; Kjeldsen & Bedding 1995)
     return NUMAX_SUN * 10 ** (np.asarray(logg) - LOGG_SUN) * (np.asarray(teff) / TEFF_SUN) ** -0.5
 
 
 def dnu_scaling(mass, radius):
+    # [paper] Dnu ~ sqrt(mean density) (Ulrich 1986; Kjeldsen & Bedding 1995)
     return DNU_SUN * np.sqrt(np.asarray(mass) / np.asarray(radius) ** 3)
 
 
@@ -85,11 +97,19 @@ def amax_scaling(lum, mass, teff):
 
 
 def mode_linewidth(teff):
+    # [own assumption] 0.95 muHz at the solar Teff, steep ~Teff^10 rise, clipped to
+    # 0.05-10 muHz. The steep Teff dependence follows the trend reported for Kepler
+    # dwarfs (Appourchaux et al. 2012; citation not verified here); the normalisation,
+    # exponent and clip are our choice.
     return float(np.clip(0.95 * (teff / TEFF_SUN) ** 10.0, 0.05, 10.0))
 
 
 def oscillation_modes(numax, dnu, amax, teff):
     """Mode frequencies [muHz], rms amplitudes [ppm] and linewidths [muHz]."""
+    # [paper] envelope FWHM 0.66 numax^0.88 and eps = 0.634 + 0.63 log Dnu (Mosser et al.
+    # 2011, 2012). [own assumption] constant small separations d01 = 0.025 Dnu,
+    # d02 = 0.12 Dnu (simplified from the Mosser 2011 universal pattern; not verified here).
+    # [numerical] orders within +-4 sigma of numax; modes below 1e-3 A_max dropped.
     sigma = 0.66 * numax ** 0.88 / (2.0 * np.sqrt(2.0 * np.log(2.0)))
     eps = 0.634 + 0.63 * np.log10(dnu)
     n = np.arange(max(1, int((numax - 4 * sigma) / dnu) - 1), int((numax + 4 * sigma) / dnu) + 2)
@@ -124,6 +144,9 @@ def apparent_mag(lum, teff, distance_pc, instrument="Kepler"):
 
     V from M_bol and the Torres BC_V; the band offsets are rough linear colour
     terms (redder bands are brighter for cool stars).
+    [paper] M_bol,sun = 4.74 (IAU 2015 B2). [own assumption] the Kp and TESS colour offsets
+    (-0.15 - 0.4 cool, -0.65 - 0.6 cool) are our approximation, not a published
+    transformation; no extinction.
     """
     v = 4.74 - 2.5 * np.log10(lum) - bc_v_torres(teff) + 5.0 * np.log10(np.asarray(distance_pc) / 10.0)
     cool = np.clip((TEFF_SUN - np.asarray(teff)) / 1000.0, 0.0, None)

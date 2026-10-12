@@ -27,6 +27,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from helpers import make_star, flux_scale  # noqa: E402
 from faculae_smoke_report import r_per  # noqa: E402
 
+# [paper] Teff 5772 K (IAU 2015 nominal, Prsa et al. 2016); P = 25.4 d, sidereal
+# equatorial rotation (the value behind ROSSBY_SUN in create_data).
+# [own assumption] the observer is in the equatorial plane (i = 90 deg; the ecliptic view
+# is i ~ 83 deg), no differential rotation (shear 0), spots at 5-30 deg latitude (the
+# main sunspot belt, simplified to a fixed band) and one 1000-d window rather than a
+# full cycle at varying coverage.
 P_SUN = 25.4
 
 

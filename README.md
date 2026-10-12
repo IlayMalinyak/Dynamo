@@ -116,7 +116,7 @@ where `Q` (`facular_area_ratio`, or the per-star `Facula Q` column) is the facul
 spot area ratio (solar value about 3). Facular brightness follows the solar
 centre-to-limb law of Meunier et al. (2010),
 
-    dT(mu) = scale * (250.9 - 407.4 mu + 190.9 mu^2)  K,
+    dT(mu) = scale * (250.9 - 407.7 mu + 190.9 mu^2)  K,
 
 so faculae are nearly invisible at disk centre and bright near the limb. Their
 intensity at each grid ring is a blend between the photosphere and a PHOENIX model
