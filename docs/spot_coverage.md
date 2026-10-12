@@ -179,8 +179,10 @@ Open: at Ro_sun the law gives 0.04% coverage, below the Sun's resolved sunspot c
 simulation over-produces amplitude per unit spot area at low activity (e.g. too-large
 spots or too little facular cancellation), which this calibration absorbs into f.
 
-**Confirmation run (to do):** `dataset_cov_broken`, the same 200 stars with the default law
-(`python scripts/make_coverage_tables.py --arms broken`), then rerun the readout with five arms.
+**Superseded by the Sun calibration** (docs/sun_calibration.md): the population's spots at
+Ro_sun were ~3x darker and ~10x larger than the Sun's. Spot properties now scale with
+activity, the law is anchored at f(Ro_sun) = 0.1%, and f_break is being recalibrated. The
+`dataset_cov_broken` confirmation run was not made.
 
 Caveats: no photometric noise, no period-detection selection, 150 stars per arm.
 

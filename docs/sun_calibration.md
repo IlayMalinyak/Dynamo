@@ -71,3 +71,34 @@ Solar parameters (dT 600 K, max area 1.2 deg^2, decay 1.5), 1000 d, 3 seeds, R_p
    It gets there with ~10x larger, ~3x darker spots on a smaller coverage. Coverage at
    Ro_sun is near the estimated solar cycle mean (0.04-0.05%), so the law's level is
    plausible, but the per-spot properties are not solar.
+
+## Population change: spot properties scale with activity
+
+Doppler-imaging and TiO spot temperatures (the Berdyugina 2005 relation) and large spots
+describe active stars; the Sun's spots are lighter and smaller. Each star's drawn
+`Spot Contrast Scale`, `Spot Max Area` and `Facula Q` are now moved toward solar values
+with Rossby number (`create_data.SPOT_PROPS_DEFAULT`, `scale_spot_properties`):
+
+| x = Ro/Ro_sun | weight w | contrast scale | max area | Q |
+|---|---|---|---|---|
+| <= 0.2 | 0 (active) | drawn, median 1 (dT 1822 K at 5772 K) | drawn, 3-50 deg^2 | drawn, median 3 |
+| 0.5 | 0.57 | x 0.53 | x 0.27 | x 2.0 |
+| >= 1 | 1 (solar) | x 0.33 (dT ~ 600 K) | x 0.098 (median 1.2 deg^2) | x 3.3 (median 10, cap 40) |
+
+with factor^w and w linear in log x between 0.2 and 1. The per-star scatter of each
+draw is kept. The endpoints are measured (above); the interpolation range is an
+assumption. Spot lifetimes are not scaled (`Decay Time` effect is small: 5.2 -> 4.3 ppt
+for 6 -> 1.5 rotations). `--coverage_config '{"props": "fixed"}'` keeps the drawn values;
+model "legacy" also keeps them.
+
+The coverage law is anchored to the Sun: f(Ro_sun) = `f_tail` = 0.1%, the coverage at
+which solar-property spots give the Sun's median R_per. Between Ro/Ro_sun = 0.5 and 1 it
+is a power law from `f_break` to `f_tail`. `f_break` (plateau level) is the remaining
+calibration parameter.
+
+**Calibration runs (to do):** `dataset_cov_act_fb0300`, `_fb0600`, `_fb1200` (f_break
+0.03 / 0.06 / 0.12), the same 200 stars as the earlier arms
+(`python scripts/make_coverage_tables.py --arms act_fb0300 act_fb0600 act_fb1200`).
+Targets: Masuda plateau 10.8 ppt and slope -4.6 +- 0.9, McQuillan percentiles, and the
+Sun-like stars' R_per near the Sun's 0.65-0.7 ppt. A rough estimate (amplitude ~
+contrast x sqrt(area x coverage)) puts the plateau at f_break ~ 0.07.

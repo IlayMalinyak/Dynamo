@@ -63,10 +63,17 @@ def test_C1_facular_priors():
     from Dynamo.create_data import generate_simdata
     np.random.seed(1)
     with tempfile.TemporaryDirectory() as d:
-        sims = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1")
+        # drawn priors, before the activity scaling of spot properties (docs/sun_calibration.md)
+        sims = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1",
+                                coverage_config={"props": "fixed"})
         assert os.path.exists(os.path.join(d, "c1_distributions.png"))
-        dep = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1b", q_activity_dep=True)
+        dep = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1b", q_activity_dep=True,
+                               coverage_config={"props": "fixed"})
+        np.random.seed(1)
+        scaled = generate_simdata(d, 1000, logging.getLogger("t"), sim_name="c1c")
     assert sims["Facula Q"].between(0.3, 20).all()
+    act = scaled["Has Dynamo"]
+    assert 3.0 < scaled.loc[act, "Facula Q"].median() < 10.0       # toward solar Q ~ 10
     assert 2.0 < sims["Facula Q"].median() < 4.5
     assert sims["Facula Contrast Scale"].between(0.3, 2.0).all()
     assert sims["Facula Lifetime Ratio"].between(1.5, 5.0).all()

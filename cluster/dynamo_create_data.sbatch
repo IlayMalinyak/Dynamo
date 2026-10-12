@@ -22,7 +22,9 @@
 #   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_f0030 1000 25
 #   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_f0100 1000 25
 #   sbatch --array=0-15 cluster/dynamo_create_data.sbatch dataset_cov_f0290 1000 13
-#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_broken 1000 25   # broken law (default)
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_act_fb0300 1000 25   # activity-scaled spots
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_act_fb0600 1000 25
+#   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_act_fb1200 1000 25
 #
 # Partition a100-public (l40s-public was drained 2026-10-12). l40s-public =
 # athena-post only, which does not see /rg (cd failed on all 16

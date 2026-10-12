@@ -7,7 +7,7 @@ import numpy as np
 
 from helpers import make_star
 from Dynamo import spots
-from Dynamo.create_data import SPOT_COVERAGE_DEFAULT, ROSSBY_SUN, spot_coverage_law
+from Dynamo.create_data import SPOT_COVERAGE_DEFAULT, SPOT_PROPS_DEFAULT, ROSSBY_SUN, spot_coverage_law
 
 _CACHE = {}
 
@@ -76,7 +76,9 @@ def test_broken_law_shape():
     x = np.array([0.01, c["ro_sat"], c["ro_flat"], 0.35, c["ro_break"], c["ro_tail"], 2 * c["ro_tail"]])
     f = spot_coverage_law(x, c)
     assert f[0] == f[1] and np.isclose(f[2], c["f_break"]) and f[3] == f[4] == c["f_break"]
-    assert np.isclose(f[5], c["f_break"] * (c["ro_tail"] / c["ro_break"]) ** -c["slope_unsat"])
+    assert np.isclose(f[5], c["f_tail"])
+    assert np.isclose(spot_coverage_law(np.sqrt(c["ro_break"] * c["ro_tail"]), c),
+                      np.sqrt(c["f_break"] * c["f_tail"]))         # power law between the anchors
     assert np.isclose(f[6], f[5] * 2 ** -c["slope_tail"])
     r = spot_coverage_law(x, dict(c, model="rossby"))
     assert np.isclose(spot_coverage_law(1.0, dict(c, model="rossby")), c["f_sun"]) and r[0] == r[1]
@@ -85,9 +87,32 @@ def test_broken_law_shape():
 def test_legacy_model_and_other_draws_unchanged():
     new, _ = _table(None)
     old, _ = _table({"model": "legacy"})
+    fixed, _ = _table({"props": "fixed"})
     assert old["Spot Coverage pct"].isna().all()
-    for col in ["Teff", "Period", "Inclination", "Activity Rate", "Lat Mean", "Spot Max Area"]:
+    for col in ["Teff", "Period", "Inclination", "Activity Rate", "Lat Mean"]:
         assert np.array_equal(new[col].values, old[col].values), col
+    props = ["Spot Contrast Scale", "Spot Max Area", "Facula Q"]
+    for col in props:                                  # legacy and "fixed" keep the drawn values
+        assert np.array_equal(fixed[col].values, old[col].values), col
+    assert np.array_equal(fixed["Spot Coverage pct"].values, new["Spot Coverage pct"].values)
+
+
+def test_spot_properties_scale_with_activity():
+    sims, pop = _table(None)
+    fixed, _ = _table({"props": "fixed"})
+    p = SPOT_PROPS_DEFAULT
+    x = sims.Rossby.values / ROSSBY_SUN
+    for col in ["Spot Contrast Scale", "Spot Max Area", "Facula Q"]:
+        assert np.isfinite(sims[col].values).all(), col
+    act, sol = x <= p["ro_active"], x >= p["ro_solar"]
+    r = sims["Spot Max Area"].values / fixed["Spot Max Area"].values
+    assert np.allclose(r[act], 1) and np.allclose(r[sol], p["area_ratio"])
+    r = sims["Spot Contrast Scale"].values / fixed["Spot Contrast Scale"].values
+    assert np.allclose(r[act], 1) and np.allclose(r[sol], p["contrast_ratio"])
+    mid = ~act & ~sol
+    assert ((r[mid] < 1) & (r[mid] > p["contrast_ratio"])).all()
+    q = sims["Facula Q"].values / fixed["Facula Q"].values
+    assert np.allclose(q[act], 1) and (q[sol] <= p["q_ratio"] + 1e-9).all()
 
 
 def test_star_spot_count_from_coverage():

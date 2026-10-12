@@ -102,30 +102,60 @@ def latitude_population(teff, prot, butterfly, pop, rng):
 # Time-mean spot coverage (fraction of the whole surface) vs Rossby number; sets the
 # number of spots (Star.generate_spot_map; table column 'Spot Coverage pct'). Per star
 # f_i = law(Ro_i/Ro_sun) * 10^N(0, scatter_dex), clipped to f_max, with Ro in units of the
-# solar value (Cranmer & Saar 2011 tau_c, as in Masuda 2022). docs/spot_coverage.md.
+# solar value (Cranmer & Saar 2011 tau_c, as in Masuda 2022). docs/spot_coverage.md,
+# docs/sun_calibration.md.
 # model "broken" (default), x = Ro/Ro_sun:
-#   x < ro_flat:             f_break * (max(x, ro_sat)/ro_flat)^-slope
-#   ro_flat <= x <= ro_break: f_break
-#   ro_break < x <= ro_tail:  f_break * (x/ro_break)^-slope_unsat
-#   x > ro_tail:              continues with slope_tail
+#   x < ro_flat:              f_break * (max(x, ro_sat)/ro_flat)^-slope
+#   ro_flat <= x <= ro_break:  f_break
+#   ro_break < x <= ro_tail:   power law from f_break to f_tail (slope_unsat, if f_tail is None)
+#   x > ro_tail:               continues with slope_tail
 #   - slope 0.881 and ro_sat 0.076: Cao & Pinsonneault 2022 (MNRAS 517, 2165) eq. 5,
 #     f = 0.0634 Ro^-0.881 above log Ro = -0.729 with their log Ro_sun = 0.39; their
 #     Pleiades fit reaches only x ~ 0.2 (ro_flat). Scatter 21% at saturation -> 0.09 dex.
-#   - flat for 0.2 < x < 0.5, then d ln R_per / d ln Ro = -4.6 +- 0.9 above Ro = 0.99
-#     (x = 0.50): Masuda 2022 (arXiv:2206.01595), Kepler stars with Kp < 12 (least
-#     detection bias); beta_sat = -0.04 +- 0.09. In our light curves R_per ~ f^0.58 per
-#     star, so slope_unsat = 4.6/0.58 = 7.93.
-#   - slope_tail = 0.881 beyond x = 0.8, where Masuda's steep range ends; the less biased
-#     Santos et al. sample flattens again at x >~ 1 (Masuda 2022, Sec. 3.4). Extending the
-#     steep slope to x = 1 would give the Sun 0.008% coverage and leave 6% of stars spotless.
-#   - f_break = 0.02: calibrated so that R_per of 4000-6250 K dwarfs plateaus at ~10.8 ppt
-#     (Masuda) and the median/95% match McQuillan et al. 2014 (5.6/22.7 ppt).
+#   - flat for 0.2 < x < 0.5, steep above: Masuda 2022 (arXiv:2206.01595), R_per of Kepler
+#     dwarfs plateaus at ~10.8 ppt and falls with d ln R / d ln Ro = -4.6 +- 0.9 above
+#     Ro = 0.99 (x = 0.50, Kp < 12 stars).
+#   - f_tail = 0.1% at ro_tail = 1 (Sun anchor): with solar spot properties the simulator
+#     gives the Sun's median R_per (0.63 vs 0.65-0.7 ppt, Basri 2013, Reinhold 2020) at
+#     0.1% coverage (docs/sun_calibration.md). slope_tail = 0.881 beyond.
+#   - f_break = 0.06: PROVISIONAL, middle of the calibration arms 0.03 / 0.06 / 0.12 (Masuda
+#     plateau, McQuillan 2014 percentiles); set from their readout.
+# Spot properties scale with activity (props "activity"; SPOT_PROPS_DEFAULT below).
 # model "rossby": single law f_sun * max(x, ro_sat)^-slope (first calibration, f_sun 0.005).
-# model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500]).
-SPOT_COVERAGE_DEFAULT = dict(model="broken", f_break=0.02, ro_flat=0.2, ro_break=0.5,
-                             slope_unsat=7.93, ro_tail=0.8, slope_tail=0.881,
+# model "legacy" restores the old count rule (0.1 sqrt(ar) spots/day, clipped to [20, 500])
+# and the old spot properties.
+SPOT_COVERAGE_DEFAULT = dict(model="broken", f_break=0.06, ro_flat=0.2, ro_break=0.5,
+                             f_tail=0.001, slope_unsat=None, ro_tail=1.0, slope_tail=0.881,
                              f_sun=0.005, slope=0.881, ro_sat=0.076,
-                             scatter_dex=0.09, f_max=0.5)
+                             scatter_dex=0.09, f_max=0.5, props="activity")
+
+# Spot properties vs activity. Each star's drawn spot contrast scale, Spot Max Area and
+# Facula Q are moved toward solar values as Ro rises: fully "active" (the drawn values:
+# Berdyugina 2005 dT, 3-50 deg^2 log-uniform, Q median 3) for x <= ro_active, fully solar
+# for x >= ro_solar, geometric interpolation in log x between. The per-star scatter of
+# each draw is kept. Solar values (docs/sun_calibration.md):
+#   contrast  dT ~ 600 K = 0.33 x Berdyugina(5772 K) (Meunier et al. 2010, 663 K, 450-670 K)
+#   max area  1.2 deg^2 median (Baumann & Solanki 2005 group areas, area-weighted 207 MSH),
+#             i.e. the active draw times 1.2 / 12.2 (12.2 = median of the 3-50 draw)
+#   Q         10 median (plage ~ 10x spot area, Meunier et al. 2010; network excluded)
+# The interpolation range is an assumption, not a measurement.
+SPOT_PROPS_DEFAULT = dict(ro_active=0.2, ro_solar=1.0, contrast_ratio=0.33,
+                          area_ratio=1.2 / 12.2, q_ratio=10.0 / 3.0, q_max=40.0)
+
+
+def solar_weight(x, ro_active, ro_solar):
+    """0 for x <= ro_active (active), 1 for x >= ro_solar (solar), linear in log x."""
+    x = np.asarray(x, dtype=float)
+    return np.clip(np.log(x / ro_active) / np.log(ro_solar / ro_active), 0.0, 1.0)
+
+
+def scale_spot_properties(x, contrast_scale, max_area, facula_q, props=None):
+    """Move per-star spot properties from the active draws toward solar values with Ro."""
+    p = dict(SPOT_PROPS_DEFAULT, **(props or {}))
+    w = solar_weight(x, p["ro_active"], p["ro_solar"])
+    return (contrast_scale * p["contrast_ratio"] ** w,
+            max_area * p["area_ratio"] ** w,
+            np.clip(facula_q * p["q_ratio"] ** w, None, p["q_max"]))
 
 
 def spot_coverage_law(x, cfg):
@@ -136,11 +166,15 @@ def spot_coverage_law(x, cfg):
     if cfg["model"] != "broken":
         raise ValueError(f"unknown spot coverage model {cfg['model']!r}")
     fb, xb, xt = cfg["f_break"], cfg["ro_break"], cfg["ro_tail"]
-    f_tail = fb * (xt / xb) ** (-cfg["slope_unsat"])
+    if cfg.get("f_tail") is not None:
+        s_un = np.log(fb / cfg["f_tail"]) / np.log(xt / xb)
+    else:
+        s_un = cfg["slope_unsat"]
+    f_tail = fb * (xt / xb) ** (-s_un)
     return np.where(x < cfg["ro_flat"],
                     fb * (np.maximum(x, cfg["ro_sat"]) / cfg["ro_flat"]) ** (-cfg["slope"]),
            np.where(x <= xb, fb,
-           np.where(x <= xt, fb * (x / xb) ** (-cfg["slope_unsat"]),
+           np.where(x <= xt, fb * (x / xb) ** (-s_un),
                     f_tail * (x / xt) ** (-cfg["slope_tail"]))))
 
 
@@ -415,6 +449,9 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     cov_pop = dict(SPOT_COVERAGE_DEFAULT)
     cov_pop.update(coverage_config or {})
     spot_coverage = spot_coverage_population(rossby, has_dynamo, cov_pop, rng_cov)
+    if cov_pop["model"] != "legacy" and cov_pop.get("props", "activity") == "activity":
+        spot_contrast_scale, spot_max_area, facula_q = scale_spot_properties(
+            rossby / ROSSBY_SUN, spot_contrast_scale, spot_max_area, facula_q, cov_pop.get("props_config"))
     with open(os.path.join(root, "population.json"), "w") as f:
         json.dump({"latitude": pop, "spot_coverage": cov_pop, "rossby_sun": float(ROSSBY_SUN),
                    "base_seed": int(base_seed),
@@ -499,7 +536,7 @@ def check_simdata(sims):
     assert (sims['Spot Max'] > sims['Spot Min']).all(), "Spot Max <= Spot Min"
     assert (sims['Period'] > 0).all(), "non-positive rotation period"
     assert (sims['Spot Max Area'] > 0).all(), "non-positive spot area"
-    assert sims['Facula Q'].between(0.3, 20.0).all(), "Facula Q out of [0.3, 20]"
+    assert sims['Facula Q'].between(0.3, SPOT_PROPS_DEFAULT["q_max"]).all(), "Facula Q out of range"
     assert sims['Facula Contrast Scale'].between(0.3, 2.0).all(), "facular contrast scale out of range"
     assert sims['Facula Lifetime Ratio'].between(1.5, 5.0).all(), "facular lifetime ratio out of range"
 
