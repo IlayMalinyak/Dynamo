@@ -23,7 +23,8 @@
 #   sbatch --array=0-7  cluster/dynamo_create_data.sbatch dataset_cov_f0100 1000 25
 #   sbatch --array=0-15 cluster/dynamo_create_data.sbatch dataset_cov_f0290 1000 13
 #
-# l40s-public = athena-post only, which does not see /rg (cd failed on all 16
+# Partition a100-public (l40s-public was drained 2026-10-12). l40s-public =
+# athena-post only, which does not see /rg (cd failed on all 16
 # tasks of the first submission). So the job runs from a copy under /home:
 #   bash cluster/stage_run_dir.sh      # code (git HEAD) + dataset tables -> RUN_DIR
 #   sbatch --array=0-7 ...             # outputs land in RUN_DIR/DATASET_DIR
@@ -37,7 +38,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --partition=l40s-public
+#SBATCH --partition=a100-public
 #SBATCH --qos=4h_0g
 #SBATCH -t 04:00:00
 #SBATCH --output=/home/ilay.kamai/logs/%x-%A_%a.out
