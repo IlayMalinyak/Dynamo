@@ -60,6 +60,9 @@ TEFF_SAMPLE_MAX = DYNAMO_TEFF_MAX
 #   after ~3 Gyr and their calibration ends at 4 Gyr, so nothing constrains older ages);
 #   upper end 10 Gyr.
 AGE_MIN, AGE_MAX, AGE_KNEE, AGE_SLOPE = 0.05, 10.0, 3.0, 0.75
+# [own assumption] no giants in tables (see generate_simdata); True restores the old,
+# unrealistic giants (P_ACTIVE_GIANT / ACTIVE_GIANT_AR then apply).
+KEEP_GIANTS = False
 
 # Spot-latitude population (lat_model "gaussian", starry_process-style). Per star:
 #   mean  mu_i = mean + rossby_slope * log10(Ro_i / Ro_sun) + N(0, mean_scatter),
@@ -442,16 +445,22 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
 
     # Interpolate stellar parameters
     interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='fastlaunch')
-    # Teff ceiling: dwarfs and subgiants hotter than TEFF_SAMPLE_MAX are redrawn (mass, [Fe/H],
-    # alpha, age) until they are cooler. This is the population "draw from the prior, keep
-    # Teff <= TEFF_SAMPLE_MAX" without losing those rows. [own assumption] the spot model is
-    # calibrated only below 6500 K (see DYNAMO_TEFF_MAX); giants are not redrawn.
+    # Sample selection: stars hotter than TEFF_SAMPLE_MAX and, unless KEEP_GIANTS, giants
+    # (logg < GIANT_LOGG off the main sequence) are redrawn (mass, [Fe/H], alpha, age) until
+    # they pass. This is the population "draw from the prior, keep the selection" without
+    # losing rows. [own assumption] the spot model is calibrated on dwarfs below 6500 K only.
+    # Giants (removed 2026-10-13): the YREC fastlaunch tracks stop at R ~ 30 R_sun with no
+    # red clump, so giants piled up at the track ends (median logg 2.0, R 19 R_sun vs Kepler
+    # 2.6, 10.5, Berger 2020); 97% had the 35-50 d placeholder period; giant spots are
+    # uncalibrated; and the oscillation model has no splitting/mixed modes (no seismic
+    # inclination signal). They existed only because 10 M^-2.5 Gyr overestimates the MS
+    # lifetime above ~1.1 M_sun.
     for attempt in range(30):
         giant = ~is_main_sequence(interp['Teff'], interp['logg']) & (interp['logg'] < GIANT_LOGG)
-        redo = np.where((interp['Teff'] > TEFF_SAMPLE_MAX) & ~giant)[0]
+        redo = np.where((interp['Teff'] > TEFF_SAMPLE_MAX) | (giant & (not KEEP_GIANTS)))[0]
         if len(redo) == 0:
             break
-        logger.info(f"Redrawing {len(redo)} stars hotter than {TEFF_SAMPLE_MAX:.0f} K (attempt {attempt + 1})")
+        logger.info(f"Redrawing {len(redo)} stars outside the selection (attempt {attempt + 1})")
         m, f, a, ag = draw_star_inputs(len(redo), logger)
         mass[redo], feh[redo], alpha[redo], ages[redo] = m, f, a, ag
         sub = interpolate_stellar_parameters(m, f, a, ag, grid_name='fastlaunch')
@@ -459,7 +468,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
             if v is not None:
                 interp[k][redo] = v
     else:
-        raise RuntimeError(f"{len(redo)} stars still hotter than {TEFF_SAMPLE_MAX} K after 30 redraws")
+        raise RuntimeError(f"{len(redo)} stars still outside the selection after 30 redraws")
 
     ar = age_activity_relation(ages, saturation_age_gyr=0.2)
     theta_low, theta_high = generate_theta_with_linear_decay(ar, Nlc)

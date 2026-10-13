@@ -85,10 +85,11 @@ time should use `Kp` (or `background.add_background(..., mag=None)`, which recov
 | facular lifetime ratio log-uniform 1.5-5 (star default 3) | own |
 | spot lifetime truncnorm(6, 2, 1.5, 15) rotations | own ("arbitrary" in the original code) |
 | cycle length truncnorm(10, 2.8, 2, 25) yr | inherited ("Reinhold", not verified) |
-| GIANT_LOGG 3.5, subgiants always spotted | own |
+| no giants in tables (KEEP_GIANTS = False, redrawn like hot stars) | own: grid has no red clump, giant periods were placeholders, giant spots uncalibrated, no seismic inclination signal (2026-10-13) |
+| GIANT_LOGG 3.5 (giant definition), subgiants always spotted | own |
 | DYNAMO_TEFF_MAX 6500 K (was 7000 K) | own: edge of the calibration data (McQuillan 2014 < 6500 K) |
 | TEFF_SAMPLE_MAX 6500 K: hotter dwarfs/subgiants redrawn when the table is built | own (same population as cutting, no lost rows) |
-| P_ACTIVE_GIANT 3% | own, rounded up from [paper] Ceillier 2017 (~2%) |
+| P_ACTIVE_GIANT 3% (only with KEEP_GIANTS) | own, rounded up from [paper] Ceillier 2017 (~2%) |
 | active-giant activity 1-30 | own |
 | latitude population: all numbers and the form (mean linear in log Ro, linear drift) | own; [paper] only the solar centroid range (Hathaway 2015) and the sign of the Ro trend |
 

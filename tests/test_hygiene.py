@@ -29,11 +29,10 @@ def test_simdata_bounds():
         assert col in sims
     assert (sims["Cycle Length"] > 0).all() and (sims["Decay Time"] >= 1.5).all()
     assert sims["Seed"].is_unique and sims["Seed"].min() == 7
-    assert not sims.loc[sims.Teff > DYNAMO_TEFF_MAX, "Has Dynamo"].any()
-    hot = sims.Teff > DYNAMO_TEFF_MAX
-    giant = sims["Evolutionary Class"] == "giant"
-    assert (sims.loc[~hot & ~giant, "Has Dynamo"]).all()            # cool dwarfs + subgiants
-    assert (sims.loc[giant, "Has Dynamo"] == sims.loc[giant, "Active Giant"] & ~hot[giant]).all()
+    # selection: no star above the Teff ceiling, no giants; every star has a dynamo
+    assert (sims.Teff <= DYNAMO_TEFF_MAX).all()
+    assert not (sims["Evolutionary Class"] == "giant").any()
+    assert sims["Has Dynamo"].all()
     assert (sims.loc[~sims["Has Dynamo"], "Activity Rate"] == 0).all()
     assert (sims.loc[sims["Has Dynamo"], "Activity Rate"] > 0).all()
 
