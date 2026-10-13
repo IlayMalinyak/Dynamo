@@ -20,13 +20,17 @@ def main():
     ap.add_argument("arm")
     ap.add_argument("--n", type=int, default=8)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--csv", default="docs/spot_coverage_calibration_act.csv",
+                    help="per-star table from coverage_calibration_report.py")
     a = ap.parse_args()
     u = pd.read_csv(f"{a.arm}/simulation_properties.csv")
-    lc = pd.concat(pd.read_parquet(f) for f in glob.glob(f"{a.arm}/lc/Kepler/*.pqt"))
-    rel = pd.read_csv("docs/spot_coverage_calibration_act.csv")
+    rel = pd.read_csv(a.csv)
     rel = rel[rel.arm == a.arm].set_index("sim_id")
     d = rel[(rel.evo == "dwarf") & (rel.rper_ppt > 0)].sort_values("ro_rel")
     pick = d.iloc[np.linspace(0, len(d) - 1, a.n).round().astype(int)]
+    want = set(pick.index)
+    lc = pd.concat(df[df.sim_id.isin(want)] for df in
+                   (pd.read_parquet(f) for f in glob.glob(f"{a.arm}/lc/Kepler/*.pqt")))
     fig, axes = plt.subplots(a.n, 1, figsize=(14, 1.9 * a.n), sharex=True)
     for ax, (sid, r) in zip(axes, pick.iterrows()):
         g = lc[lc.sim_id == sid]
