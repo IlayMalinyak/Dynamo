@@ -32,6 +32,48 @@ reference.
 | tau_c conventions | only Ro/Ro_sun carried across papers | own |
 | old single law | f_sun 0.005 | own calibration vs McQuillan 2014 |
 
+## Stellar priors (`create_data.draw_star_inputs`), checked 2026-10-13
+
+Against Berger et al. 2020 (186k Kepler stars) crossed with Santos et al. 2019/2021 periods,
+Teff <= 6500 K, logg >= 3.5. 5 / 50 / 95%:
+
+| | ours | Berger, all Kepler | Santos periods x Berger | decision |
+|---|---|---|---|---|
+| mass [M_sun] | 0.62 / 0.96 / 1.29 | 0.68 / 0.99 / 1.35 | 0.60 / 0.90 / 1.33 | kept (inherited lognormal) |
+| [Fe/H] | -0.28 / -0.02 / 0.26 | -0.29 / 0.00 / 0.21 | -0.25 / 0.00 / 0.25 | kept (inherited N(-0.03, 0.17)) |
+| Teff [K] | 4024 / 5593 / 6367 | 4424 / 5692 / 6329 | 4082 / 5473 / 6317 | follows |
+| age [Gyr], old prior truncnorm(2.5, 2) | 0.48 / 2.80 / 5.73 | 1.75 / 5.43 / 14.3 | 1.59 / 5.75 / 15.8 | **replaced** |
+| P [d], old age prior | 3.5 / 17.3 / 32.6 | - | 3.7 / 18.9 / 38.8 | too fast |
+| P [d], new age prior (below) | 4.4 / 25 / 45 | - | | slower than the detected sample, as expected: Kepler's rotation detection is nearly complete only to ~3 Gyr (Bouma 2024, citing Masuda 2022) |
+
+**Age prior** (`sample_age`): p(t) ~ 1 + 0.75 min(t, 3 Gyr) on 0.05-10 Gyr.
+- [paper] Bouma et al. 2024 (arXiv:2410.06246): rotation and lithium ages of 23,813 Kepler stars
+  (3800-6200 K) give 2.1x as many 2-3 Gyr stars as 0-1 Gyr stars, and a star formation rate
+  falling by 2.81 +- 0.12 over 3 Gyr (kinematic heating plus declining SFR). Slope 0.75/Gyr
+  reproduces both. Medians of their quality-0 table give a steeper 2.5; we use their
+  posterior-based numbers.
+- [own assumption] linear shape; flat density from 3 to 10 Gyr. Bouma's calibration ends at
+  4 Gyr and Kepler's period completeness drops beyond ~3 Gyr, so older ages are unconstrained.
+- Berger et al. 2020 isochrone ages are not used (56% median uncertainty, tail beyond the age
+  of the Galaxy).
+- 5% of the new table is younger than 1 Gyr (old prior: 10%).
+
+## Table columns not used by the default model
+
+Kept so the optional paths keep working; do not read them as physical inputs of the default
+(`model` "broken", `lat_model` "gaussian") simulation.
+
+| column | status |
+|---|---|
+| `alpha/H` | drawn, never used (YREC interpolation takes mass, [Fe/H], age) |
+| `Activity Rate` | used only by `model` "legacy" (spot count, spot-band amplitude); 0 for stars without a dynamo |
+| `Spot Min`, `Spot Max` | used only by the "band" latitude model; with "gaussian" they are mean +- 2 width, for reference |
+| `CDPP`, `Outlier Rate`, `Flicker Time Scale` | 0 for clean tables (`--add_noise` off) |
+
+`Distance` is now derived from a drawn `Kp` (magnitude-limited survey); noise added at training
+time should use `Kp` (or `background.add_background(..., mag=None)`, which recovers it from
+`Distance`).
+
 ## Population priors (`create_data.py`)
 
 | item | status |

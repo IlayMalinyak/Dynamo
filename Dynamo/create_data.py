@@ -10,6 +10,7 @@ import multiprocessing as mp
 from Dynamo.planet_params import generate_planet_parameters, assign_spin_orbit_geometry, _create_flat_arrays
 from tqdm import tqdm
 from Dynamo.star import Star
+from Dynamo.background import survey_mag, apparent_mag
 from Dynamo.imf import sample_kroupa_imf, sample_kepler_imf
 from Dynamo.stellar_interpolator import interpolate_stellar_parameters
 from Dynamo.phoenix import download_phoenix_models
@@ -50,6 +51,15 @@ DYNAMO_TEFF_MAX = 6500.0
 # [own assumption] dwarfs/subgiants hotter than this are redrawn when a table is built
 # (generate_simdata); same value as DYNAMO_TEFF_MAX, so no table star is hot and spotless.
 TEFF_SAMPLE_MAX = DYNAMO_TEFF_MAX
+# Age prior p(t) ~ 1 + AGE_SLOPE * min(t, AGE_KNEE) on [AGE_MIN, AGE_MAX] Gyr (sample_age).
+# [paper] Bouma et al. 2024 (AJ, arXiv:2410.06246, Sect. 4.1): rotation ages of 23,813 Kepler
+#   stars give 2.1x as many 2-3 Gyr as 0-1 Gyr stars, star formation falling by
+#   2.81 +- 0.12 over 3 Gyr; a linear density with slope 0.75/Gyr gives both (2.09, 2.75).
+#   (Medians of their quality-0 table give a steeper 2.5; we use their posterior-based value.)
+# [own assumption] linear shape; flat beyond 3 Gyr (Bouma: rotation-period completeness drops
+#   after ~3 Gyr and their calibration ends at 4 Gyr, so nothing constrains older ages);
+#   upper end 10 Gyr.
+AGE_MIN, AGE_MAX, AGE_KNEE, AGE_SLOPE = 0.05, 10.0, 3.0, 0.75
 
 # Spot-latitude population (lat_model "gaussian", starry_process-style). Per star:
 #   mean  mu_i = mean + rossby_slope * log10(Ro_i / Ro_sun) + N(0, mean_scatter),
@@ -358,12 +368,32 @@ def calculate_cdpp(L, distance, Nlc):
     return cdpp
 
 
+def sample_age(n):
+    """Ages [Gyr] from p(t) ~ 1 + AGE_SLOPE * min(t, AGE_KNEE) on [AGE_MIN, AGE_MAX]."""
+    t = np.linspace(AGE_MIN, AGE_MAX, 4001)
+    pdf = 1.0 + AGE_SLOPE * np.minimum(t, AGE_KNEE)
+    cdf = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] + pdf[:-1]) * np.diff(t))])
+    return np.interp(np.random.uniform(0, cdf[-1], n), cdf, t)
+
+
 def draw_star_inputs(n, logger):
     """Mass, [Fe/H], [alpha/Fe] and age of n stars, ages below the approximate MS lifetime."""
+    # Checked 2026-10-13 against Berger et al. 2020 (Gaia-Kepler catalogue, arXiv:2001.07737)
+    # crossed with the Santos et al. 2019/2021 rotation periods, Teff <= 6500 K, logg >= 3.5
+    # (docs/ASSUMPTIONS.md, "Stellar priors"):
+    # mass [inherited] lognormal, median 1.05 M_sun: 5/50/95% 0.62/0.96/1.29 after the Teff
+    #   redraw vs 0.60/0.90/1.33 for stars with detected periods -> kept.
+    # [Fe/H] [inherited] N(-0.03, 0.17): 5-95% -0.28..0.26 vs Berger -0.29..0.21 -> kept
+    #   (LAMOST gives a wider 0.25 dex, Dong et al. 2014).
+    # [alpha/Fe] NOT USED: the YREC interpolation takes mass, [Fe/H] and age only.
+    # age: sample_age (Bouma et al. 2024 shape below 3 Gyr, flat beyond); replaces the
+    #   inherited truncnorm(2.5, 2), which gave median P 17 d, shorter than even the
+    #   detection-biased Santos sample (19 d). Berger isochrone ages are not used: too
+    #   uncertain for cool dwarfs (median 56%).
     mass = sample_kepler_imf(n, m_min=0.3, m_max=2.0)
     feh = np.random.normal(loc=-0.03, scale=0.17, size=n)  # distribution from Kepler stars
     alpha = np.random.uniform(0, 0.4, size=n)
-    ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n)
+    ages = sample_age(n)
     # Enforce Main Sequence constraint: Age < MS lifetime
     # MS lifetime approx: 10 * (M/M_sun)^(-2.5) Gyr
     # Approximation derived from Mass-Luminosity relation L ~ M^3.5 (e.g., Hansen, Kawaler, & Trimble, 2004)
@@ -374,7 +404,7 @@ def draw_star_inputs(n, logger):
         if n_evolved == 0:
             break
         logger.info(f"Resampling {n_evolved} evolved stars (Attempt {attempt+1}/10)")
-        ages[mask_evolved] = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n_evolved)
+        ages[mask_evolved] = sample_age(n_evolved)
     mask_evolved = ages > ms_lifetime
     if np.any(mask_evolved):
         logger.warning(f"Clamping {np.count_nonzero(mask_evolved)} stars to MS lifetime")
@@ -488,10 +518,14 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
         prot2 = 10 ** np.random.uniform(low=0, high=np.log10(20), size=Nlc - int(0.8 * Nlc))
         prot = np.concatenate((prot1, prot2))
         np.random.shuffle(prot)
-    # generate clean samples
-    # 1. Assign distances (Log-Normal distribution matching from Kepler)
-    # Mean ~1320 pc, Median ~1108 pc -> mu ~ 7.0, sigma ~ 0.6
-    distance = np.random.lognormal(mean=7.0, sigma=0.6, size=Nlc)
+    # Kepler magnitude and distance. Kepler is magnitude-limited, so the apparent magnitude
+    # is drawn ([own assumption] background.survey_mag: p(m) ~ 10^(0.3 m), Kp 9-16) and the
+    # distance follows from Kp, L and Teff (background.apparent_mag, no extinction).
+    # Until 2026-10-13 distance was lognormal (median 1.1 kpc) independent of L, which put
+    # M dwarfs at Kp ~ 20 and giants at Kp ~ 7. Separate generator: other draws unchanged.
+    rng_mag = np.random.default_rng([int(base_seed), 59])
+    kp = np.array([survey_mag(rng_mag, "Kepler") for _ in range(Nlc)])
+    distance = 10.0 * 10 ** ((kp - apparent_mag(L, teff, 10.0, "Kepler")) / 5.0)
     
     if add_noise:
         cdpp = calculate_cdpp(L, distance, Nlc)
@@ -557,6 +591,7 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     sims["Butterfly"] = butterfly
     sims['convective_shift'] = convective_shift
     sims['Distance'] = distance
+    sims['Kp'] = kp
     sims['CDPP'] = cdpp
     sims['Outlier Rate'] = outlier_rate
     sims['Flicker Time Scale'] = flicker
