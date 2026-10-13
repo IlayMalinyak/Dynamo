@@ -47,6 +47,9 @@ GIANT_LOGG = 3.5
 P_ACTIVE_GIANT = 0.03
 ACTIVE_GIANT_AR = (1.0, 30.0)
 DYNAMO_TEFF_MAX = 6500.0
+# [own assumption] dwarfs/subgiants hotter than this are redrawn when a table is built
+# (generate_simdata); same value as DYNAMO_TEFF_MAX, so no table star is hot and spotless.
+TEFF_SAMPLE_MAX = DYNAMO_TEFF_MAX
 
 # Spot-latitude population (lat_model "gaussian", starry_process-style). Per star:
 #   mean  mu_i = mean + rossby_slope * log10(Ro_i / Ro_sun) + N(0, mean_scatter),
@@ -355,6 +358,30 @@ def calculate_cdpp(L, distance, Nlc):
     return cdpp
 
 
+def draw_star_inputs(n, logger):
+    """Mass, [Fe/H], [alpha/Fe] and age of n stars, ages below the approximate MS lifetime."""
+    mass = sample_kepler_imf(n, m_min=0.3, m_max=2.0)
+    feh = np.random.normal(loc=-0.03, scale=0.17, size=n)  # distribution from Kepler stars
+    alpha = np.random.uniform(0, 0.4, size=n)
+    ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n)
+    # Enforce Main Sequence constraint: Age < MS lifetime
+    # MS lifetime approx: 10 * (M/M_sun)^(-2.5) Gyr
+    # Approximation derived from Mass-Luminosity relation L ~ M^3.5 (e.g., Hansen, Kawaler, & Trimble, 2004)
+    ms_lifetime = 10.0 * (mass ** (-2.5))
+    for attempt in range(10):
+        mask_evolved = ages > ms_lifetime
+        n_evolved = np.count_nonzero(mask_evolved)
+        if n_evolved == 0:
+            break
+        logger.info(f"Resampling {n_evolved} evolved stars (Attempt {attempt+1}/10)")
+        ages[mask_evolved] = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n_evolved)
+    mask_evolved = ages > ms_lifetime
+    if np.any(mask_evolved):
+        logger.warning(f"Clamping {np.count_nonzero(mask_evolved)} stars to MS lifetime")
+        ages[mask_evolved] = ms_lifetime[mask_evolved] * 0.95
+    return mass, feh, alpha, ages
+
+
 def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', base_seed=0,
                      q_activity_dep=False, latitude_config=None,
                      coverage_config=None):
@@ -381,48 +408,37 @@ def generate_simdata(root, Nlc, logger, add_noise=False, sim_name='dataset', bas
     # tau_evol[mask] = np.random.uniform(low=2, high=4, size=np.count_nonzero(mask))
     butterfly = np.random.choice([True, False], size=Nlc, p=[0.8, 0.2])
     diffrot_shear = np.random.uniform(0, 0.4, size=Nlc)
-    mass = sample_kepler_imf(Nlc, m_min=0.3, m_max=2.0)
-    feh = np.random.normal(loc=-0.03, scale=0.17, size=Nlc)  # distribution from Kepler stars
-    alpha = np.random.uniform(0, 0.4, size=Nlc)
-    ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=Nlc)
-    
-    # Enforce Main Sequence constraint: Age < MS lifetime
-    # MS lifetime approx: 10 * (M/M_sun)^(-2.5) Gyr
-    # Approximation derived from Mass-Luminosity relation L ~ M^3.5 (e.g., Hansen, Kawaler, & Trimble, 2004)
-    ms_lifetime = 10.0 * (mass ** (-2.5))
-    
-    # Rejection sampling for evolved stars
-    max_attempts = 10
-    for attempt in range(max_attempts):
-         mask_evolved = ages > ms_lifetime
-         n_evolved = np.count_nonzero(mask_evolved)
-         
-         if n_evolved == 0:
-             break
-             
-         logger.info(f"Resampling {n_evolved} evolved stars (Attempt {attempt+1}/{max_attempts})")
-         
-         # Resample ages for evolved stars
-         new_ages = truncated_normal_dist(2.5, 2, lower_bound=0.05, upper_bound=10, size=n_evolved)
-         ages[mask_evolved] = new_ages
-    
-    # Final cleanup if any somehow still fail (clamp to lifetime - epsilon)
-    mask_evolved = ages > ms_lifetime
-    if np.any(mask_evolved):
-        logger.warning(f"Clamping {np.count_nonzero(mask_evolved)} stars to MS lifetime")
-        ages[mask_evolved] = ms_lifetime[mask_evolved] * 0.95
+    mass, feh, alpha, ages = draw_star_inputs(Nlc, logger)
+
+    # Interpolate stellar parameters
+    interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='fastlaunch')
+    # Teff ceiling: dwarfs and subgiants hotter than TEFF_SAMPLE_MAX are redrawn (mass, [Fe/H],
+    # alpha, age) until they are cooler. This is the population "draw from the prior, keep
+    # Teff <= TEFF_SAMPLE_MAX" without losing those rows. [own assumption] the spot model is
+    # calibrated only below 6500 K (see DYNAMO_TEFF_MAX); giants are not redrawn.
+    for attempt in range(30):
+        giant = ~is_main_sequence(interp['Teff'], interp['logg']) & (interp['logg'] < GIANT_LOGG)
+        redo = np.where((interp['Teff'] > TEFF_SAMPLE_MAX) & ~giant)[0]
+        if len(redo) == 0:
+            break
+        logger.info(f"Redrawing {len(redo)} stars hotter than {TEFF_SAMPLE_MAX:.0f} K (attempt {attempt + 1})")
+        m, f, a, ag = draw_star_inputs(len(redo), logger)
+        mass[redo], feh[redo], alpha[redo], ages[redo] = m, f, a, ag
+        sub = interpolate_stellar_parameters(m, f, a, ag, grid_name='fastlaunch')
+        for k, v in sub.items():
+            if v is not None:
+                interp[k][redo] = v
+    else:
+        raise RuntimeError(f"{len(redo)} stars still hotter than {TEFF_SAMPLE_MAX} K after 30 redraws")
 
     ar = age_activity_relation(ages, saturation_age_gyr=0.2)
     theta_low, theta_high = generate_theta_with_linear_decay(ar, Nlc)
     mask = theta_high > 90
     theta_high[mask] = np.random.uniform(40, 90, size=np.count_nonzero(mask))
-
-    # Interpolate stellar parameters
-    interp = interpolate_stellar_parameters(mass, feh, alpha, ages, grid_name='fastlaunch')
     convective_shift = np.random.normal(loc=1, scale=1, size=Nlc)
     teff = interp['Teff']
     logg = interp['logg']
-    
+
     # Flag Main Sequence stars
     is_ms = is_main_sequence(teff, logg)
 

@@ -142,13 +142,16 @@ def _generate_single_planet(M_star_kg, R_star_m, stellar_mass_msun,
     
     mj = 318  # Jupiter mass in Earth masses
     
-    # Radius from mass-radius relation (Muller et al. 2023)
-    if mass < 4.4:
-        radius_rearth = mass ** (1/0.27)
+    # Radius from the mass-radius relation [paper] Baron, Mueller, Helled et al. 2024
+    # (A&A 686, A296; arXiv:2311.12593, Eq. 1 / Table 3), Earth units. Until 2026-10-13
+    # the exponents were inverted (M^(1/0.27) etc.) and the prefactors missing, which put
+    # the median planet at ~0.24 R* (clip 0.3) instead of ~3 R_earth.
+    if mass < 4.37:
+        radius_rearth = 1.02 * mass ** 0.27
     elif mass < 127:
-        radius_rearth = mass ** (1/0.67)
+        radius_rearth = 0.56 * mass ** 0.67
     else:
-        radius_rearth = mass ** (-1/0.06)
+        radius_rearth = 18.6 * mass ** (-0.06)
     
     radius_rstar = np.clip(radius_rearth * R_earth / R_star_m, 0, 0.3)
     

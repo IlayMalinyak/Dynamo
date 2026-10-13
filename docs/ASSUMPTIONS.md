@@ -45,6 +45,7 @@ reference.
 | cycle length truncnorm(10, 2.8, 2, 25) yr | inherited ("Reinhold", not verified) |
 | GIANT_LOGG 3.5, subgiants always spotted | own |
 | DYNAMO_TEFF_MAX 6500 K (was 7000 K) | own: edge of the calibration data (McQuillan 2014 < 6500 K) |
+| TEFF_SAMPLE_MAX 6500 K: hotter dwarfs/subgiants redrawn when the table is built | own (same population as cutting, no lost rows) |
 | P_ACTIVE_GIANT 3% | own, rounded up from [paper] Ceillier 2017 (~2%) |
 | active-giant activity 1-30 | own |
 | latitude population: all numbers and the form (mean linear in log Ro, linear drift) | own; [paper] only the solar centroid range (Hathaway 2015) and the sign of the Ro trend |
@@ -89,6 +90,8 @@ reference.
 | obliquity: aligned spread 10 deg, misaligned fraction 0.1 / 0.5, isotropic misaligned, step at the Kraft break | own numbers and forms; [paper] Kraft break 6250 K and the trend (Winn 2010; Albrecht 2012, 2022) |
 | uniform spin azimuth; coplanar multi-planet systems | own |
 | RV K without (1 - e^2)^-1/2 | inherited |
+| planet radius from mass | [paper] Baron, Mueller, Helled et al. 2024 Eq. 1 (fixed 2026-10-13: exponents were inverted, median planet was 0.24 R*) |
+| planet mass prior | [paper, not verified] "Malhotra 2015" (inherited) |
 
 ## Sun calibration (`scripts/sun_calibration.py`)
 
